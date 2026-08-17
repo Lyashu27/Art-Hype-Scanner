@@ -43,7 +43,6 @@ st.markdown("Поиск абсолютных лидеров на основе **
 with st.sidebar:
     st.header("Настройки сканирования")
     
-    # Словарь со значениями для API
     time_filters = {
         "За 24 часа (Мгновенный хайп)": "24h",
         "За 3 дня (Свежие тренды)": "72h",
@@ -54,7 +53,7 @@ with st.sidebar:
     time_scope_val = time_filters[selected_filter]
     
     st.divider()
-    st.info("⚙️ **Точность 100%:** Скрипт собирает реальные цифры с площадок и передает их нейросети. Нейросеть работает в режиме нулевой температуры (без галлюцинаций), проводя только логический анализ фактов.")
+    st.info("⚙️ **Точность 100%:** Скрипт собирает реальные метрики и передает их в Gemini с temperature=0.0 для стабильного аналитического отчета.")
 
 # --- БАЗА ПЕРСОНАЖЕЙ ---
 CHARACTERS = [
@@ -77,20 +76,20 @@ CHARACTERS = [
     {"name": "Ahri", "query": "Ahri League of Legends", "game": "League of Legends", "is_gacha": False}
 ]
 
-# --- 1. ЖЕСТКИЙ СБОР РЕАЛЬНЫХ ДАННЫХ ---
+# --- 1. СБОР РЕАЛЬНЫХ МЕТРИК ---
 def fetch_real_metrics(char, time_str):
     da_count, x_count = 0, 0
     
-    # DeviantArt RSS (поддерживает временной фильтр max_age)
+    # DeviantArt RSS
     try:
         encoded_query = urllib.parse.quote(char['query'])
         url = f"https://backend.deviantart.com/rss.xml?q=boost%3Apopular+in%3Adigitalart+max_age%3A{time_str}+{encoded_query}"
         feed = feedparser.parse(url)
         da_count = len(feed.entries)
-    except:
+    except Exception:
         pass
 
-    # X (Twitter) через RapidAPI (без жестких лимитов времени в бесплатном API, берем топ актуального)
+    # X (Twitter) RapidAPI
     if rapidapi_key:
         try:
             url = "https://twitter154.p.rapidapi.com/search/search"
@@ -101,7 +100,7 @@ def fetch_real_metrics(char, time_str):
                 data = res.json()
                 results = data.get('results', [])
                 x_count = len(results)
-        except:
+        except Exception:
             pass
 
     return {
@@ -113,10 +112,25 @@ def fetch_real_metrics(char, time_str):
         "Общий Хайп-Индекс": da_count + x_count
     }
 
-# --- 2. СТРОГИЙ ИИ АНАЛИЗАТОР (ТЕМПЕРАТУРА 0.0) ---
+# --- 2. ДИНАМИЧЕСКИЙ ВЫЗОВ GEMINI (TEMPERATURE 0.0) ---
 def analyze_metrics_deterministically(metrics_data, key):
-    # Берем самую надежную модель
-    model_name = "gemini-1.5-flash"
+    supported_models = []
+    try:
+        list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        res = requests.get(list_url, timeout=8).json()
+        for m in res.get('models', []):
+            if 'generateContent' in m.get('supportedGenerationMethods', []):
+                name = m.get('name', '').replace('models/', '')
+                if ('flash' in name.lower() or 'pro' in name.lower()) and 'lite' not in name.lower():
+                    supported_models.append(name)
+    except Exception:
+        pass
+
+    fallback_models = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash-latest", "gemini-pro"]
+    models_to_try = []
+    for m in supported_models + fallback_models:
+        if m not in models_to_try:
+            models_to_try.append(m)
 
     prompt = f"""
     Ты выступаешь в роли аналитического процессора. Я предоставляю тебе ТОЧНЫЕ цифры активности по персонажам за выбранный период:
@@ -124,7 +138,7 @@ def analyze_metrics_deterministically(metrics_data, key):
 
     Твоя задача — строго на основе колонки "Общий Хайп-Индекс" отсортировать персонажей и сформировать JSON-отчет. 
     Не выдумывай цифры! Используй только то, что передано. 
-    Для топовых персонажей добавь актуальный контекст (почему цифры могут быть такими высокими: патчи, аниме, мемы).
+    Для топовых персонажей добавь краткий актуальный контекст (почему цифры высокие: патчи, аниме, инфоповоды).
 
     Формат ответа СТРОГО JSON:
     {{
@@ -149,18 +163,28 @@ def analyze_metrics_deterministically(metrics_data, key):
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "responseMimeType": "application/json",
-            "temperature": 0.0 # ЖЕСТКАЯ ФИКСАЦИЯ. Убивает галлюцинации, дает 100% повторяемость при одних и тех же цифрах.
+            "temperature": 0.0
         }
     }
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
-    resp = requests.post(url, headers=headers, json=payload, timeout=30)
-    
-    if resp.status_code == 200:
-        raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
-        return json.loads(raw_text.strip())
-    else:
-        raise RuntimeError(f"Сбой ИИ: {resp.text}")
+    last_err = ""
+    for model_name in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=35)
+            if resp.status_code == 200:
+                raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
+                if raw_text.startswith("```json"): raw_text = raw_text[7:]
+                if raw_text.startswith("```"): raw_text = raw_text[3:]
+                if raw_text.endswith("```"): raw_text = raw_text[:-3]
+                return json.loads(raw_text.strip()), model_name
+            else:
+                last_err = f"[{model_name}] {resp.status_code}: {resp.text}"
+        except Exception as e:
+            last_err = f"[{model_name}] {str(e)}"
+            continue
+
+    raise RuntimeError(f"Сбой ИИ. Детали: {last_err}")
 
 # --- ИНТЕРФЕЙС И ЗАПУСК ---
 if st.button(f"🚀 Собрать жесткие метрики ({selected_filter})", type="primary", use_container_width=True):
@@ -170,7 +194,7 @@ if st.button(f"🚀 Собрать жесткие метрики ({selected_filt
         status_text = st.empty()
         progress_bar = st.progress(0)
         
-        # 1. СБОР ФАКТОВ
+        # 1. Сбор метрик
         metrics_list = []
         with ThreadPoolExecutor(max_workers=4) as executor:
             for idx, item in enumerate(executor.map(lambda c: fetch_real_metrics(c, time_scope_val), CHARACTERS)):
@@ -178,10 +202,10 @@ if st.button(f"🚀 Собрать жесткие метрики ({selected_filt
                 progress_bar.progress((idx + 1) / len(CHARACTERS))
                 status_text.markdown(f"📡 Парсинг площадок: **{idx + 1} / {len(CHARACTERS)}**")
 
-        # 2. АНАЛИЗ ФАКТОВ
+        # 2. Анализ данных
         status_text.markdown("🧠 Цифры получены. ИИ формирует детерминированный отчет (Temperature: 0.0)...")
         try:
-            ai_data = analyze_metrics_deterministically(metrics_list, api_key)
+            ai_data, used_model = analyze_metrics_deterministically(metrics_list, api_key)
             
             st.session_state['results'] = ai_data
             st.session_state['df'] = pd.DataFrame(metrics_list).sort_values(by="Общий Хайп-Индекс", ascending=False)
@@ -190,7 +214,7 @@ if st.button(f"🚀 Собрать жесткие метрики ({selected_filt
             
             progress_bar.empty()
             status_text.empty()
-            st.toast("Отчет зафиксирован!", icon="✅")
+            st.toast(f"Отчет зафиксирован! (Модель: {used_model})", icon="✅")
             
         except Exception as ex:
             st.error(f"Ошибка ИИ: {ex}")
