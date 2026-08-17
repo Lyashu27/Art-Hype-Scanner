@@ -75,7 +75,7 @@ CHARACTERS = [
     {"name": "Jinx", "tag": "jinx_(league_of_legends)", "game": "League of Legends"}
 ]
 
-# --- СБОР СТАТИСТИКИ (С ОБХОДОМ БЛОКИРОВОК) ---
+# --- СБОР СТАТИСТИКИ ---
 
 def fetch_art_stats(char):
     url = "https://gelbooru.com/index.php"
@@ -96,31 +96,36 @@ def fetch_art_stats(char):
         pass
     return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": 0, "Суммарный скор": 0, "ER (Вовлеченность)": 0}
 
-# --- ДИНАМИЧЕСКИЙ ВЫЗОВ GEMINI API ---
-
-def get_available_gemini_model(key):
-    """Автоматически находит рабочую модель для вашего ключа"""
-    list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
-    try:
-        res = requests.get(list_url, timeout=10).json()
-        models = res.get('models', [])
-        supported = [
-            m['name'] for m in models 
-            if 'generateContent' in m.get('supportedGenerationMethods', [])
-        ]
-        # Приоритеты: flash -> pro -> любая доступная
-        for m in supported:
-            if "flash" in m.lower():
-                return m
-        if supported:
-            return supported[0]
-    except:
-        pass
-    return "models/gemini-1.5-flash"
+# --- ВЫЗОВ GEMINI API С АВТОМАТИЧЕСКИМ ПЕРЕБОРОМ МОДЕЛЕЙ ---
 
 def request_gemini_analysis(metrics, key):
-    selected_model = get_available_gemini_model(key)
-    
+    # Получаем список поддерживаемых моделей аккаунта
+    dynamic_models = []
+    try:
+        list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        res = requests.get(list_url, timeout=6).json()
+        for m in res.get('models', []):
+            if 'generateContent' in m.get('supportedGenerationMethods', []):
+                dynamic_models.append(m['name'].replace('models/', ''))
+    except:
+        pass
+
+    # Базовый пул актуальных моделей
+    fallback_pool = [
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-exp",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+        "gemini-pro"
+    ]
+
+    # Объединяем без дубликатов
+    models_to_try = []
+    for model in dynamic_models + fallback_pool:
+        if model not in models_to_try:
+            models_to_try.append(model)
+
     prompt = f"""
     Проанализируй эти актуальные метрики популярности:
     {json.dumps(metrics, ensure_ascii=False)}
@@ -147,15 +152,22 @@ def request_gemini_analysis(metrics, key):
         "generationConfig": {"responseMimeType": "application/json"}
     }
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/{selected_model}:generateContent?key={key}"
-    resp = requests.post(url, headers=headers, json=payload, timeout=25)
-    
-    if resp.status_code == 200:
-        result_json = resp.json()
-        raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
-        return json.loads(raw_text), selected_model
-    else:
-        raise RuntimeError(f"Ошибка вызова API ({selected_model}): {resp.text}")
+    last_err = ""
+    for model_name in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=20)
+            if resp.status_code == 200:
+                result_json = resp.json()
+                raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
+                return json.loads(raw_text), model_name
+            else:
+                last_err = resp.text
+        except Exception as e:
+            last_err = str(e)
+            continue
+
+    raise RuntimeError(f"Не удалось получить ответ ни от одной модели. Последняя ошибка: {last_err}")
 
 # --- ИНТЕРФЕЙС И ЗАПУСК ---
 
@@ -177,7 +189,7 @@ if start_scan:
                 raw_metrics = list(executor.map(fetch_art_stats, CHARACTERS))
             fetch_duration = time.time() - start_t
             
-            st.write(f"✅ Данные собраны за {fetch_duration:.2f} сек. Подбор модели и AI-анализ...")
+            st.write(f"✅ Данные собраны за {fetch_duration:.2f} сек. Подбор рабочей модели и AI-анализ...")
             
             try:
                 ai_start_t = time.time()
@@ -187,7 +199,7 @@ if start_scan:
                 st.session_state['ai_results'] = ai_response
                 st.session_state['metrics_df'] = pd.DataFrame(raw_metrics).sort_values(by="ER (Вовлеченность)", ascending=False)
                 st.session_state['scan_done'] = True
-                st.success(f"Анализ завершен через {model_used}! (Сбор: {fetch_duration:.1f}с | ИИ: {ai_duration:.1f}с)")
+                st.success(f"Анализ завершен через модель {model_used}! (Сбор: {fetch_duration:.1f}с | ИИ: {ai_duration:.1f}с)")
             except Exception as ex:
                 st.error(f"Ошибка при анализе: {ex}")
 
