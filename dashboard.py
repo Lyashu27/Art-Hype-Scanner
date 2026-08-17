@@ -24,7 +24,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- ЗАГРУЗКА КЛЮЧА ---
+# --- ЗАГРУЗКА КЛЮЧА ИЗ SECRETS / SIDEBAR ---
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except:
@@ -45,7 +45,7 @@ with st.sidebar:
     st.divider()
     st.info("🧠 **Алгоритм виральности:** ИИ учитывает не только объем фанартов, но и влияние СМИ (выход патчей, сливы, анонсы). Абсолютный лидер выводится в отдельный блок.")
 
-# --- БАЗА ПЕРСОНАЖЕЙ (С флагом Гача/Не Гача) ---
+# --- БАЗА ПЕРСОНАЖЕЙ ---
 CHARACTERS = [
     {"name": "Jane Doe", "game": "ZZZ", "is_gacha": True},
     {"name": "Ellen Joe", "game": "ZZZ", "is_gacha": True},
@@ -72,11 +72,27 @@ CHARACTERS = [
     {"name": "Lucy", "game": "Cyberpunk Edgerunners", "is_gacha": False}
 ]
 
-# --- АГЕНТНАЯ ФУНКЦИЯ GEMINI ---
+# --- АГЕНТНАЯ ФУНКЦИЯ GEMINI С ДИНАМИЧЕСКИМ ПОИСКОМ МОДЕЛИ ---
 def agentic_market_analysis(char_list, time_scope, key):
-    # Оставляем только Flash модели для скорости и точности
-    models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+    supported_models = []
+    try:
+        list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        res = requests.get(list_url, timeout=8).json()
+        for m in res.get('models', []):
+            if 'generateContent' in m.get('supportedGenerationMethods', []):
+                name = m.get('name', '').replace('models/', '')
+                if ('flash' in name.lower() or 'pro' in name.lower()) and 'lite' not in name.lower():
+                    supported_models.append(name)
+    except Exception:
+        pass
+
+    fallback_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro"]
     
+    models_to_try = []
+    for m in supported_models + fallback_models:
+        if m not in models_to_try:
+            models_to_try.append(m)
+
     current_date = datetime.now().strftime("%Y-%m-%d")
 
     prompt = f"""
@@ -107,10 +123,10 @@ def agentic_market_analysis(char_list, time_scope, key):
         {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Краткое обоснование спроса в РФ/СНГ", "tags": ["tag1", "tag2"] }}
       ],
       "metrics": [
-        {{ "name": "Имя", "game": "Игра", "is_gacha": true_или_false, "virality_score": 80, "recent_news": "Событие или патч (если есть, иначе пусто)", "trend": "Растет/Спадает" }}
+        {{ "name": "Имя", "game": "Игра", "is_gacha": true, "virality_score": 80, "recent_news": "Событие или патч (если есть, иначе пусто)", "trend": "Растет/Спадает" }}
       ]
     }}
-    В массиве metrics должны быть оценены ВСЕ переданные персонажи.
+    В массиве metrics должны быть оценены ВСЕ переданные персонажи. Поле is_gacha должно строго соответствовать переданному списку (true или false).
     """
     
     headers = {"Content-Type": "application/json"}
@@ -153,7 +169,6 @@ if st.button(f"🚀 Сгенерировать отчет ({time_filter})", type
             ai_data, model_used = agentic_market_analysis(CHARACTERS, time_filter, api_key)
             progress_bar.progress(90)
             
-            # Подготовка данных для таблиц
             df = pd.DataFrame(ai_data.get('metrics', []))
             
             st.session_state['results'] = ai_data
@@ -177,9 +192,9 @@ if st.session_state.get('done', False):
     results = st.session_state['results']
     df = st.session_state['df']
     
-    st.caption(f"⏱️ **Актуальность данных проверена:** {st.session_state['timestamp']} | **Фирез:** {st.session_state['time_scope']}")
+    st.caption(f"⏱️ **Актуальность данных проверена:** {st.session_state['timestamp']} | **Фильтр:** {st.session_state['time_scope']}")
     
-    # --- БЛОК АБСОЛЮТНОГО ЛИДЕРА (Топ 1) ---
+    # --- БЛОК АБСОЛЮТНОГО ЛИДЕРА ---
     top1 = results.get('overall_top_1', {})
     if top1:
         tags_html = " ".join([f"<span class='badge'>#{t}</span>" for t in top1.get('tags', [])])
@@ -195,7 +210,7 @@ if st.session_state.get('done', False):
         </div>
         """, unsafe_allow_html=True)
     
-    # --- ТОПЫ ИИ ПО РЕГИОНАМ ---
+    # --- ТОПЫ ПО РЕГИОНАМ ---
     col_w, col_r = st.columns(2)
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
     classes = ["top1", "top2", "top3", "", ""]
@@ -231,11 +246,13 @@ if st.session_state.get('done', False):
     
     df_sorted = df.sort_values(by="virality_score", ascending=False)
     
-    # Фильтрация датафреймов
-    df_gacha = df_sorted[df_sorted['is_gacha'] == True].drop(columns=['is_gacha']).reset_index(drop=True)
-    df_classic = df_sorted[df_sorted['is_gacha'] == False].drop(columns=['is_gacha']).reset_index(drop=True)
+    if 'is_gacha' in df_sorted.columns:
+        df_gacha = df_sorted[df_sorted['is_gacha'] == True].drop(columns=['is_gacha']).reset_index(drop=True)
+        df_classic = df_sorted[df_sorted['is_gacha'] == False].drop(columns=['is_gacha']).reset_index(drop=True)
+    else:
+        df_gacha = df_sorted
+        df_classic = df_sorted
     
-    # Переименование колонок для красоты интерфейса
     column_config = {
         "name": "Персонаж",
         "game": "Франшиза",
