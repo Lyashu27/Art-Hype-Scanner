@@ -32,7 +32,7 @@ twitch_id = st.secrets.get("TWITCH_CLIENT_ID", "")
 twitch_secret = st.secrets.get("TWITCH_CLIENT_SECRET", "")
 
 st.title("🌐 Omni-Channel Radar: Глобальный мониторинг трендов")
-st.markdown("Сквозной сбор инфополя: **СМИ + Reddit + YouTube + Bluesky + Danbooru + Steam + Twitch** → AI-экстракция самых востребованных героинь для 3D-арта.")
+st.markdown("Сквозной сбор инфополя: **СМИ + Reddit + YouTube + Bluesky + Booru + Steam + Twitch** → AI-экстракция лидеров и макро-аналитика ТОП-100.")
 
 # Индикаторы подключенных каналов
 with st.sidebar:
@@ -46,19 +46,14 @@ with st.sidebar:
     st.write(f"🎮 Steam Hub: {'🟢 API активен' if steam_key else '🟡 Открытый режим'}")
     st.write(f"🟣 Twitch / IGDB: {'🟢 Подключен' if (twitch_id and twitch_secret) else '⚪ Выключен'}")
     st.divider()
+    st.info("📊 **Аналитика:** Нейросеть сформирует графики актуального спроса и две сводные таблицы по 50 персонажей (Гачи и Остальные).")
 
 # ==========================================
 # МОДУЛИ СБОРА ДАННЫХ
 # ==========================================
 
 def fetch_rss_news():
-    """1. Игровые СМИ (Запад + СНГ)"""
-    feeds = [
-        "https://kotaku.com/rss", 
-        "https://www.ign.com/feed.xml",
-        "https://stopgame.ru/rss/news.xml",
-        "https://www.gematsu.com/feed"
-    ]
+    feeds = ["https://kotaku.com/rss", "https://www.ign.com/feed.xml", "https://stopgame.ru/rss/news.xml", "https://www.gematsu.com/feed"]
     results = []
     headers = {'User-Agent': 'Mozilla/5.0'}
     for url in feeds:
@@ -67,13 +62,12 @@ def fetch_rss_news():
             feed = feedparser.parse(res.content)
             for entry in feed.entries[:6]:
                 results.append(f"[СМИ/News]: {entry.title}")
-        except Exception:
+        except:
             continue
     return results
 
 def fetch_reddit_trends():
-    """2. Сообщества Reddit (Открытые JSON-эндпоинты)"""
-    subs = ["gaming", "gachagaming", "Genshin_Impact", "HonkaiStarRail", "ZenlessZoneZero"]
+    subs = ["gaming", "gachagaming", "Genshin_Impact", "HonkaiStarRail", "ZenlessZoneZero", "leagueoflegends", "Overwatch"]
     results = []
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     for sub in subs:
@@ -86,103 +80,75 @@ def fetch_reddit_trends():
                     title = p.get('data', {}).get('title', '')
                     ups = p.get('data', {}).get('ups', 0)
                     results.append(f"[Reddit r/{sub} (+{ups})]: {title}")
-        except Exception:
+        except:
             continue
     return results
 
 def fetch_youtube_trailers(api_key):
-    """3. YouTube Data API v3 (Трейлеры за последние 48 часов)"""
-    if not api_key:
-        return []
+    if not api_key: return []
     time_limit = (datetime.utcnow() - timedelta(days=2)).isoformat() + "Z"
     url = "https://www.googleapis.com/youtube/v3/search"
-    params = {
-        "part": "snippet",
-        "q": "character trailer OR gameplay trailer",
-        "type": "video",
-        "publishedAfter": time_limit,
-        "maxResults": 10,
-        "key": api_key
-    }
+    params = {"part": "snippet", "q": "character trailer OR gameplay trailer", "type": "video", "publishedAfter": time_limit, "maxResults": 10, "key": api_key}
     results = []
     try:
         res = requests.get(url, params=params, timeout=5)
         if res.status_code == 200:
             for item in res.json().get('items', []):
-                title = item['snippet']['title']
-                channel = item['snippet']['channelTitle']
-                results.append(f"[YouTube ({channel})]: {title}")
-    except Exception:
+                results.append(f"[YouTube ({item['snippet']['channelTitle']})]: {item['snippet']['title']}")
+    except:
         pass
     return results
 
 def fetch_bluesky_trends():
-    """4. Bluesky AT Protocol (Публичный поиск по арт-трендам)"""
     url = "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts"
     params = {"q": "fanart OR character art OR gacha update", "limit": 15}
     results = []
     try:
         res = requests.get(url, params=params, timeout=5)
         if res.status_code == 200:
-            posts = res.json().get('posts', [])
-            for p in posts:
+            for p in res.json().get('posts', []):
                 text = p.get('record', {}).get('text', '').replace('\n', ' ')[:100]
-                likes = p.get('likeCount', 0)
-                results.append(f"[Bluesky (+{likes}❤️)]: {text}")
-    except Exception:
+                results.append(f"[Bluesky (+{p.get('likeCount', 0)}❤️)]: {text}")
+    except:
         pass
     return results
 
 def fetch_booru_hot_tags():
-    """5. Арт-борды (Danbooru / Safebooru популярные теги)"""
     results = []
     try:
-        url = "https://danbooru.donmai.us/posts.json?limit=15&tags=order:rank"
-        res = requests.get(url, headers={'User-Agent': 'HypeRadar/1.0'}, timeout=5)
+        res = requests.get("https://danbooru.donmai.us/posts.json?limit=15&tags=order:rank", headers={'User-Agent': 'HypeRadar/1.0'}, timeout=5)
         if res.status_code == 200:
             for post in res.json():
                 char_tags = post.get('tag_string_character', '')
                 if char_tags:
                     results.append(f"[Art-Boards Pop Tag]: {char_tags} (Score: {post.get('score', 0)})")
-    except Exception:
+    except:
         pass
     return results
 
 def fetch_steam_trends():
-    """6. Steam (Трендовые релизы и апдейты)"""
     results = []
     try:
-        # Получаем список популярных новинок Steam
-        url = "https://store.steampowered.com/api/featuredcategories"
-        res = requests.get(url, timeout=5)
+        res = requests.get("https://store.steampowered.com/api/featuredcategories", timeout=5)
         if res.status_code == 200:
-            top_sellers = res.json().get('top_sellers', {}).get('items', [])[:8]
-            for item in top_sellers:
-                name = item.get('name', '')
-                results.append(f"[Steam Top Seller]: {name}")
-    except Exception:
+            for item in res.json().get('top_sellers', {}).get('items', [])[:8]:
+                results.append(f"[Steam Top Seller]: {item.get('name', '')}")
+    except:
         pass
     return results
 
 def fetch_twitch_top_categories(c_id, c_secret):
-    """7. Twitch Helix API (Категории с максимальным числом зрителей)"""
-    if not (c_id and c_secret):
-        return []
+    if not (c_id and c_secret): return []
     results = []
     try:
-        # Авторизация OAuth
-        auth_url = f"https://id.twitch.tv/oauth2/token?client_id={c_id}&client_secret={c_secret}&grant_type=client_credentials"
-        auth_res = requests.post(auth_url, timeout=5).json()
+        auth_res = requests.post(f"https://id.twitch.tv/oauth2/token?client_id={c_id}&client_secret={c_secret}&grant_type=client_credentials", timeout=5).json()
         token = auth_res.get('access_token', '')
-        
         if token:
-            headers = {"Client-ID": c_id, "Authorization": f"Bearer {token}"}
-            games_url = "https://api.twitch.tv/helix/games/top?first=10"
-            res = requests.get(games_url, headers=headers, timeout=5)
+            res = requests.get("https://api.twitch.tv/helix/games/top?first=10", headers={"Client-ID": c_id, "Authorization": f"Bearer {token}"}, timeout=5)
             if res.status_code == 200:
                 for g in res.json().get('data', []):
                     results.append(f"[Twitch Top Streamed]: {g.get('name')}")
-    except Exception:
+    except:
         pass
     return results
 
@@ -200,39 +166,39 @@ def analyze_cross_platform_feed(feed_dump, key):
                 name = m.get('name', '').replace('models/', '')
                 if ('flash' in name.lower() or 'pro' in name.lower()) and 'lite' not in name.lower():
                     supported.append(name)
-    except Exception:
+    except:
         pass
 
-    models_to_try = supported + ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
+    models_to_try = supported + ["gemini-2.5-flash", "gemini-1.5-flash"]
 
     prompt = f"""
-    Действуй как ведущий игровой аналитик и арт-директор. Перед тобой массив данных, собранный в реальном времени из 7 ключевых источников (СМИ, Reddit, YouTube, Bluesky, Danbooru, Steam, Twitch):
-
-    ДАННЫЕ МОНИТОРИНГА:
+    Действуй как ведущий игровой аналитик и арт-директор. Перед тобой массив данных, собранный в реальном времени из 7 источников:
     {json.dumps(feed_dump, ensure_ascii=False)}
 
     ТВОЯ ЗАДАЧА:
-    1. Изучить сводку инфоповодов (новые трейлеры, патчи, споры на Reddit, топовые стримы и популярные теги).
-    2. Выделить из этого массива конкретных ЖЕНСКИХ персонажей, вокруг которых сейчас идет максимальная концентрация внимания.
-    3. Определить Абсолютного Лидера (#1) и сформировать рейтинги для создания 3D-арта.
+    1. Изучить сводку инфоповодов (новые трейлеры, патчи, споры на Reddit, стримы).
+    2. Выделить Абсолютного Лидера, Топ-5 для Мира и Топ-5 для СНГ.
+    3. Сформировать ДВА больших макро-списка: ровно 50 женских персонажей Гача-игр и ровно 50 женских персонажей остальных игр (AAA, соревновательные). Первые позиции в этих списках (топ 10-15) должны строго отражать тренды из переданных данных, остальные заполни на основе своей базы знаний о самых стабильно популярных героинях для 3D-арта.
 
     Формат ответа СТРОГО JSON:
     {{
       "absolute_leader": {{
-        "name": "Имя героини",
-        "game": "Игра",
-        "virality_score": 98,
-        "primary_trigger": "Из какого источника/события идет главный хайп",
-        "tags": ["3dart", "tag2", "tag3"]
+        "name": "Имя героини", "game": "Игра", "virality_score": 98, "primary_trigger": "Событие из логов", "tags": ["3dart", "tag2"]
       }},
       "world_top": [
-        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Почему будет высокий спрос на международных площадках", "score": 95, "tags": ["tag1", "tag2"] }}
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Кратко", "score": 95, "tags": ["tag1"] }}
       ],
       "ru_top": [
-        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Почему зайдет в СНГ/РФ фандоме", "score": 92, "tags": ["tag1", "tag2"] }}
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Кратко", "score": 92, "tags": ["tag1"] }}
+      ],
+      "gacha_top_50": [
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "score": 99, "trend": "🔥" }}
+      ],
+      "classic_top_50": [
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "score": 99, "trend": "📈" }}
       ]
     }}
-    Выдай по 5 персонажей в world_top и ru_top.
+    Убедись, что массивы gacha_top_50 и classic_top_50 содержат ровно по 50 объектов.
     """
 
     headers = {"Content-Type": "application/json"}
@@ -245,7 +211,7 @@ def analyze_cross_platform_feed(feed_dump, key):
     for model_name in models_to_try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=35)
+            resp = requests.post(url, headers=headers, json=payload, timeout=50) # Увеличен таймаут для генерации 100 объектов
             if resp.status_code == 200:
                 raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
                 if raw_text.startswith("```json"): raw_text = raw_text[7:]
@@ -264,7 +230,7 @@ def analyze_cross_platform_feed(feed_dump, key):
 # ИНТЕРФЕЙС И ЗАПУСК
 # ==========================================
 
-if st.button("🚀 Запустить сквозной мультиплатформенный скан", type="primary", use_container_width=True):
+if st.button("🚀 Запустить сквозной скан и генерацию макро-топов", type="primary", use_container_width=True):
     if not gemini_key:
         st.error("⚠️ Укажите GEMINI_API_KEY в Secrets.")
     else:
@@ -272,9 +238,8 @@ if st.button("🚀 Запустить сквозной мультиплатфо�
         status = st.empty()
         start_time = time.time()
         
-        status.markdown("📡 **Сбор данных:** Параллельный опрос СМИ, Reddit, YouTube, Bluesky, Booru, Steam и Twitch...")
+        status.markdown("📡 **Сбор данных:** Опрос СМИ, Reddit, YouTube, Bluesky, Booru, Steam и Twitch...")
         
-        # Параллельный сбор со всех источников
         collected_feed = []
         with ThreadPoolExecutor(max_workers=7) as executor:
             f_rss = executor.submit(fetch_rss_news)
@@ -288,8 +253,8 @@ if st.button("🚀 Запустить сквозной мультиплатфо�
             for future in [f_rss, f_reddit, f_yt, f_bsky, f_booru, f_steam, f_twitch]:
                 collected_feed.extend(future.result())
                 
-        progress.progress(60)
-        status.markdown(f"🧠 **ИИ-анализ:** Собрано **{len(collected_feed)}** фактов инфополя. Gemini вычисляет лидеров...")
+        progress.progress(50)
+        status.markdown(f"🧠 **ИИ-анализ:** Обработка **{len(collected_feed)}** фактов. Генерация списков ТОП-50... (Ожидание ~20 сек)")
         
         try:
             ai_results, used_model = analyze_cross_platform_feed(collected_feed, gemini_key)
@@ -301,21 +266,20 @@ if st.button("🚀 Запустить сквозной мультиплатфо�
             
             progress.empty()
             status.empty()
-            st.toast(f"Анализ завершен через {used_model}! (Сбор: {time.time()-start_time:.1f}с)", icon="✅")
+            st.toast(f"Анализ завершен через {used_model}!", icon="✅")
         except Exception as e:
             st.error(f"Ошибка анализа: {e}")
 
 # ==========================================
-# ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ
+# ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ И ДИАГРАММ
 # ==========================================
 
 if st.session_state.get('scan_done', False):
     res = st.session_state['omni_results']
-    raw = st.session_state['raw_feed']
     
-    st.caption(f"⏱️ **Данные актуальны на:** {st.session_state['timestamp']} | Обработано источников: **{len(raw)}**")
+    st.caption(f"⏱️ **Данные актуальны на:** {st.session_state['timestamp']}")
     
-    # Блок абсолютного лидера
+    # 1. АБСОЛЮТНЫЙ ЛИДЕР
     leader = res.get('absolute_leader', {})
     if leader:
         tags_str = " ".join([f"<span class='badge'>#{t}</span>" for t in leader.get('tags', [])])
@@ -331,6 +295,7 @@ if st.session_state.get('scan_done', False):
         </div>
         """, unsafe_allow_html=True)
 
+    # 2. МИКРО-ТОПЫ
     col_w, col_r = st.columns(2)
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
     classes = ["top1", "top2", "top3", "", ""]
@@ -359,6 +324,55 @@ if st.session_state.get('scan_done', False):
             </div>
             """, unsafe_allow_html=True)
 
-    with st.expander("🔍 Посмотреть сырой поток перехваченных данных"):
-        st.write(f"Всего событий собрано: {len(raw)}")
-        st.json(raw)
+    st.divider()
+
+    # 3. ПОДГОТОВКА ДАННЫХ ДЛЯ ДИАГРАММ И ТАБЛИЦ
+    df_gacha = pd.DataFrame(res.get('gacha_top_50', []))
+    df_classic = pd.DataFrame(res.get('classic_top_50', []))
+    
+    # Настройка визуального отображения колонок в таблице
+    col_config = {
+        "rank": st.column_config.NumberColumn("Ранг", format="%d"),
+        "name": "Персонаж",
+        "game": "Франшиза",
+        "score": st.column_config.ProgressColumn("Виральность", min_value=0, max_value=100, format="%d"),
+        "trend": "Тренд"
+    }
+
+    # 4. ДИАГРАММЫ (ГРАФИКИ)
+    st.subheader("📊 Распределение хайпа (Топ-15 лидеров категорий)")
+    col_chart1, col_chart2 = st.columns(2)
+    
+    with col_chart1:
+        if not df_gacha.empty:
+            fig_g = px.bar(
+                df_gacha.head(15).sort_values('score', ascending=True), 
+                x='score', y='name', color='score', orientation='h',
+                color_continuous_scale='Blues', title="Гача-Игры (Top 15)", template="plotly_dark"
+            )
+            fig_g.update_layout(yaxis_title=None, xaxis_title="Индекс спроса")
+            st.plotly_chart(fig_g, use_container_width=True)
+
+    with col_chart2:
+        if not df_classic.empty:
+            fig_c = px.bar(
+                df_classic.head(15).sort_values('score', ascending=True), 
+                x='score', y='name', color='score', orientation='h',
+                color_continuous_scale='Reds', title="AAA и Соревновательные (Top 15)", template="plotly_dark"
+            )
+            fig_c.update_layout(yaxis_title=None, xaxis_title="Индекс спроса")
+            st.plotly_chart(fig_c, use_container_width=True)
+
+    # 5. МАКРО-СПИСКИ ТОП-50 (В 2 СТОЛБЦА)
+    st.subheader("🗄️ Макро-аналитика: ТОП-50 персонажей для 3D-арта")
+    col_tab1, col_tab2 = st.columns(2)
+    
+    with col_tab1:
+        st.markdown("<h4 style='text-align: center; color: #4b8bff;'>🎲 Гача-Игры (Топ 50)</h4>", unsafe_allow_html=True)
+        if not df_gacha.empty:
+            st.dataframe(df_gacha, use_container_width=True, hide_index=True, column_config=col_config, height=600)
+            
+    with col_tab2:
+        st.markdown("<h4 style='text-align: center; color: #ff4b4b;'>⚔️ Остальные игры (Топ 50)</h4>", unsafe_allow_html=True)
+        if not df_classic.empty:
+            st.dataframe(df_classic, use_container_width=True, hide_index=True, column_config=col_config, height=600)
