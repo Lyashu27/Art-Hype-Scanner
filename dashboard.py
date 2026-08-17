@@ -8,7 +8,6 @@ import time
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
 st.set_page_config(page_title="AI Art Hype Scanner", page_icon="🎨", layout="wide")
 
-# Стили оформления карточек
 st.markdown("""
 <style>
     .metric-card {background-color: #1a1c23; padding: 18px; border-radius: 8px; border-left: 5px solid #ff4b4b; margin-bottom: 12px;}
@@ -29,10 +28,8 @@ with st.sidebar:
     st.header("Настройки")
     api_key = st.text_input("Gemini API Key:", type="password", help="Ключ с aistudio.google.com")
     st.divider()
-    st.info(
-        "💡 **Примечание по сети:** Если при сканировании все значения в таблице равны 0, включите системный VPN на ПК для обхода блокировок арт-баз провайдером.")
 
-# --- БАЗА ИЗ 50+ ВОСТРЕБОВАННЫХ ГЕРОИНЬ ---
+# --- БАЗА ПЕРСОНАЖЕЙ ---
 CHARACTERS = [
     # ZZZ
     {"name": "Jane Doe", "tag": "jane_doe_(zenless_zone_zero)", "game": "ZZZ"},
@@ -78,40 +75,59 @@ CHARACTERS = [
     {"name": "Jinx", "tag": "jinx_(league_of_legends)", "game": "League of Legends"}
 ]
 
-
-# --- ПАРАЛЛЕЛЬНЫЙ СБОР СТАТИСТИКИ ---
+# --- СБОР СТАТИСТИКИ (С ОБХОДОМ БЛОКИРОВОК) ---
 
 def fetch_art_stats(char):
     url = "https://gelbooru.com/index.php"
     params = {"page": "dapi", "s": "post", "q": "index", "json": 1, "limit": 60, "tags": char['tag']}
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/javascript, */*; q=0.01'
+    }
     try:
-        res = requests.get(url, params=params, headers=headers, timeout=3.5)
+        res = requests.get(url, params=params, headers=headers, timeout=5)
         if res.status_code == 200:
             posts = res.json().get('post', [])
             score = sum(int(p.get('score', 0)) for p in posts)
             count = len(posts)
             er = round(score / count, 2) if count > 0 else 0
-            return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": count, "Суммарный скор": score,
-                    "ER (Вовлеченность)": er}
+            return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": count, "Суммарный скор": score, "ER (Вовлеченность)": er}
     except:
         pass
-    return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": 0, "Суммарный скор": 0,
-            "ER (Вовлеченность)": 0}
+    return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": 0, "Суммарный скор": 0, "ER (Вовлеченность)": 0}
 
+# --- ДИНАМИЧЕСКИЙ ВЫЗОВ GEMINI API ---
 
-# --- ПРЯМОЙ ВЫЗОВ GEMINI API БЕЗ SDK-ЗАВИСИМОСТЕЙ ---
+def get_available_gemini_model(key):
+    """Автоматически находит рабочую модель для вашего ключа"""
+    list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+    try:
+        res = requests.get(list_url, timeout=10).json()
+        models = res.get('models', [])
+        supported = [
+            m['name'] for m in models 
+            if 'generateContent' in m.get('supportedGenerationMethods', [])
+        ]
+        # Приоритеты: flash -> pro -> любая доступная
+        for m in supported:
+            if "flash" in m.lower():
+                return m
+        if supported:
+            return supported[0]
+    except:
+        pass
+    return "models/gemini-1.5-flash"
 
 def request_gemini_analysis(metrics, key):
-    models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
-
+    selected_model = get_available_gemini_model(key)
+    
     prompt = f"""
-    Проанализируй эти актуальные метрики популярности (ER - вовлеченность, объем новых работ, скор):
+    Проанализируй эти актуальные метрики популярности:
     {json.dumps(metrics, ensure_ascii=False)}
 
     Ты арт-директор. Твоя задача — отобрать ТОП-5 персонажей для создания качественного 3D-арта на СЕГОДНЯШНИЙ день.
     Сформируй две выборки:
-    1. world_top: ТОП-5 по мировому тренду (высокий ER, интерес на западных и азиатских арт-площадках).
+    1. world_top: ТОП-5 по мировому тренду (высокий ER, интерес на арт-площадках).
     2. ru_top: ТОП-5 с учетом предпочтений СНГ/РФ аудитории (гачи + культовая классика: Ведьмак, Киберпанк, Nier, Resident Evil).
 
     Формат ответа СТРОГО JSON:
@@ -131,25 +147,17 @@ def request_gemini_analysis(metrics, key):
         "generationConfig": {"responseMimeType": "application/json"}
     }
 
-    last_err = None
-    for model_name in models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
-        try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=20)
-            if resp.status_code == 200:
-                result_json = resp.json()
-                raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
-                return json.loads(raw_text)
-            else:
-                last_err = resp.text
-        except Exception as e:
-            last_err = str(e)
-            continue
+    url = f"https://generativelanguage.googleapis.com/v1beta/{selected_model}:generateContent?key={key}"
+    resp = requests.post(url, headers=headers, json=payload, timeout=25)
+    
+    if resp.status_code == 200:
+        result_json = resp.json()
+        raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
+        return json.loads(raw_text), selected_model
+    else:
+        raise RuntimeError(f"Ошибка вызова API ({selected_model}): {resp.text}")
 
-    raise RuntimeError(f"Ошибка вызова API Gemini: {last_err}")
-
-
-# --- УПРАВЛЕНИЕ ЗАПУСКОМ И СОСТОЯНИЕМ ---
+# --- ИНТЕРФЕЙС И ЗАПУСК ---
 
 col_btn, col_status = st.columns([1, 3])
 
@@ -163,43 +171,36 @@ if start_scan:
         st.error("⚠️ Укажите Gemini API Key в левой панели перед запуском.")
     else:
         with log_placeholder.container():
-            st.write("📡 Подключение к базам данных... Опрос площадок...")
+            st.write("📡 Сбор метрик с арт-баз в параллельных потоках...")
             start_t = time.time()
             with ThreadPoolExecutor(max_workers=20) as executor:
                 raw_metrics = list(executor.map(fetch_art_stats, CHARACTERS))
             fetch_duration = time.time() - start_t
-
-            zero_metric_count = sum(1 for m in raw_metrics if m['Суммарный скор'] == 0)
-            if zero_metric_count > len(CHARACTERS) * 0.8:
-                st.warning(
-                    "⚠️ Большинство баз вернули 0. Включите системный VPN на ПК для подгрузки реальных значений ER.")
-            else:
-                st.write(f"✅ Данные собраны за {fetch_duration:.2f} сек. Отправка в нейросеть...")
-
+            
+            st.write(f"✅ Данные собраны за {fetch_duration:.2f} сек. Подбор модели и AI-анализ...")
+            
             try:
                 ai_start_t = time.time()
-                ai_response = request_gemini_analysis(raw_metrics, api_key)
+                ai_response, model_used = request_gemini_analysis(raw_metrics, api_key)
                 ai_duration = time.time() - ai_start_t
-
-                # Сохраняем в состояние сессии
+                
                 st.session_state['ai_results'] = ai_response
-                st.session_state['metrics_df'] = pd.DataFrame(raw_metrics).sort_values(by="ER (Вовлеченность)",
-                                                                                       ascending=False)
+                st.session_state['metrics_df'] = pd.DataFrame(raw_metrics).sort_values(by="ER (Вовлеченность)", ascending=False)
                 st.session_state['scan_done'] = True
-                st.success(f"Анализ завершен! (Сбор: {fetch_duration:.1f}с | ИИ: {ai_duration:.1f}с)")
+                st.success(f"Анализ завершен через {model_used}! (Сбор: {fetch_duration:.1f}с | ИИ: {ai_duration:.1f}с)")
             except Exception as ex:
                 st.error(f"Ошибка при анализе: {ex}")
 
-# --- ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ ЧЕРЕЗ ВКЛАДКИ ---
+# --- ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ ---
 
 if st.session_state.get('scan_done', False):
     st.divider()
     tab_world, tab_ru, tab_all = st.tabs([
-        "🌍 ТОП-5 Мировой тренд",
-        "🇷🇺 ТОП-5 СНГ и РФ",
+        "🌍 ТОП-5 Мировой тренд", 
+        "🇷🇺 ТОП-5 СНГ и РФ", 
         "💯 Полный рейтинг (Все героини)"
     ])
-
+    
     top_data = st.session_state['ai_results']
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
     classes = ["top1", "top2", "top3", "top4", "top5"]
