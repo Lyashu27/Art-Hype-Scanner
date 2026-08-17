@@ -362,4 +362,4 @@ if st.session_state.get('scan_done', False):
             
     with col_tab2:
         st.markdown("<h4 style='text-align: center; color: #ff4b4b;'>⚔️ Остальные игры (Топ 50)</h4>", unsafe_allow_html=True)
-        if not df_classic.empty: st.dataframe(df_classic
+        if not df_classic.empty: st.dataframe(df_classic)
