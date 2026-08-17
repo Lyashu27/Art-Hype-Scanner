@@ -1,0 +1,233 @@
+import streamlit as st
+import pandas as pd
+import requests
+from concurrent.futures import ThreadPoolExecutor
+import json
+import time
+
+# --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
+st.set_page_config(page_title="AI Art Hype Scanner", page_icon="🎨", layout="wide")
+
+# Стили оформления карточек
+st.markdown("""
+<style>
+    .metric-card {background-color: #1a1c23; padding: 18px; border-radius: 8px; border-left: 5px solid #ff4b4b; margin-bottom: 12px;}
+    .top1 {border-left-color: #ffd700;} 
+    .top2 {border-left-color: #c0c0c0;} 
+    .top3 {border-left-color: #cd7f32;}
+    .top4 {border-left-color: #4b8bff;}
+    .top5 {border-left-color: #ff4b8b;}
+    .badge {background-color: #262730; padding: 3px 8px; border-radius: 4px; font-size: 12px; margin-right: 5px;}
+</style>
+""", unsafe_allow_html=True)
+
+st.title("🎨 Аналитика 3D-фанарта: Глобальные и региональные тренды")
+st.markdown("Предиктивный отбор самых востребованных женских персонажей для создания 3D-артов.")
+
+# --- БОКОВАЯ ПАНЕЛЬ ---
+with st.sidebar:
+    st.header("Настройки")
+    api_key = st.text_input("Gemini API Key:", type="password", help="Ключ с aistudio.google.com")
+    st.divider()
+    st.info(
+        "💡 **Примечание по сети:** Если при сканировании все значения в таблице равны 0, включите системный VPN на ПК для обхода блокировок арт-баз провайдером.")
+
+# --- БАЗА ИЗ 50+ ВОСТРЕБОВАННЫХ ГЕРОИНЬ ---
+CHARACTERS = [
+    # ZZZ
+    {"name": "Jane Doe", "tag": "jane_doe_(zenless_zone_zero)", "game": "ZZZ"},
+    {"name": "Ellen Joe", "tag": "ellen_joe", "game": "ZZZ"},
+    {"name": "Miyabi", "tag": "hoshimi_miyabi", "game": "ZZZ"},
+    {"name": "Zhu Yuan", "tag": "zhu_yuan_(zenless_zone_zero)", "game": "ZZZ"},
+    {"name": "Nicole Demara", "tag": "nicole_demara", "game": "ZZZ"},
+    # Honkai Star Rail
+    {"name": "Firefly", "tag": "firefly_(honkai:_star_rail)", "game": "Honkai Star Rail"},
+    {"name": "Acheron", "tag": "acheron_(honkai:_star_rail)", "game": "Honkai Star Rail"},
+    {"name": "Kafka", "tag": "kafka_(honkai:_star_rail)", "game": "Honkai Star Rail"},
+    {"name": "Black Swan", "tag": "black_swan_(honkai:_star_rail)", "game": "Honkai Star Rail"},
+    {"name": "Ruan Mei", "tag": "ruan_mei_(honkai:_star_rail)", "game": "Honkai Star Rail"},
+    {"name": "Sparkle", "tag": "sparkle_(honkai:_star_rail)", "game": "Honkai Star Rail"},
+    {"name": "Jingliu", "tag": "jingliu_(honkai:_star_rail)", "game": "Honkai Star Rail"},
+    # Genshin Impact
+    {"name": "Furina", "tag": "furina_(genshin_impact)", "game": "Genshin Impact"},
+    {"name": "Raiden Shogun", "tag": "raiden_shogun", "game": "Genshin Impact"},
+    {"name": "Yelan", "tag": "yelan_(genshin_impact)", "game": "Genshin Impact"},
+    {"name": "Navia", "tag": "navia_(genshin_impact)", "game": "Genshin Impact"},
+    {"name": "Arlecchino", "tag": "arlecchino_(genshin_impact)", "game": "Genshin Impact"},
+    {"name": "Hu Tao", "tag": "hu_tao_(genshin_impact)", "game": "Genshin Impact"},
+    {"name": "Ganyu", "tag": "ganyu_(genshin_impact)", "game": "Genshin Impact"},
+    # AAA & Classics
+    {"name": "Tifa Lockhart", "tag": "tifa_lockhart", "game": "Final Fantasy VII"},
+    {"name": "Aerith Gainsborough", "tag": "aerith_gainsborough", "game": "Final Fantasy VII"},
+    {"name": "2B", "tag": "yorha_no._2_type_b", "game": "NieR:Automata"},
+    {"name": "Ada Wong", "tag": "ada_wong", "game": "Resident Evil"},
+    {"name": "Jill Valentine", "tag": "jill_valentine", "game": "Resident Evil"},
+    {"name": "Eve", "tag": "eve_(stellar_blade)", "game": "Stellar Blade"},
+    {"name": "Lara Croft", "tag": "lara_croft", "game": "Tomb Raider"},
+    # Fighting
+    {"name": "Chun-Li", "tag": "chun-li", "game": "Street Fighter"},
+    {"name": "Cammy White", "tag": "cammy_white", "game": "Street Fighter"},
+    {"name": "Juri Han", "tag": "juri_han", "game": "Street Fighter"},
+    # RPG & Shooters
+    {"name": "Ciri", "tag": "cirilla_fiona_elen_riannon", "game": "The Witcher"},
+    {"name": "Yennefer", "tag": "yennefer_of_vengerberg", "game": "The Witcher"},
+    {"name": "Lucy", "tag": "lucyna_kushinada", "game": "Cyberpunk Edgerunners"},
+    {"name": "D.Va", "tag": "d.va_(overwatch)", "game": "Overwatch"},
+    {"name": "Kiriko", "tag": "kiriko_(overwatch)", "game": "Overwatch"},
+    {"name": "Ahri", "tag": "ahri_(league_of_legends)", "game": "League of Legends"},
+    {"name": "Jinx", "tag": "jinx_(league_of_legends)", "game": "League of Legends"}
+]
+
+
+# --- ПАРАЛЛЕЛЬНЫЙ СБОР СТАТИСТИКИ ---
+
+def fetch_art_stats(char):
+    url = "https://gelbooru.com/index.php"
+    params = {"page": "dapi", "s": "post", "q": "index", "json": 1, "limit": 60, "tags": char['tag']}
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    try:
+        res = requests.get(url, params=params, headers=headers, timeout=3.5)
+        if res.status_code == 200:
+            posts = res.json().get('post', [])
+            score = sum(int(p.get('score', 0)) for p in posts)
+            count = len(posts)
+            er = round(score / count, 2) if count > 0 else 0
+            return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": count, "Суммарный скор": score,
+                    "ER (Вовлеченность)": er}
+    except:
+        pass
+    return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": 0, "Суммарный скор": 0,
+            "ER (Вовлеченность)": 0}
+
+
+# --- ПРЯМОЙ ВЫЗОВ GEMINI API БЕЗ SDK-ЗАВИСИМОСТЕЙ ---
+
+def request_gemini_analysis(metrics, key):
+    models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+
+    prompt = f"""
+    Проанализируй эти актуальные метрики популярности (ER - вовлеченность, объем новых работ, скор):
+    {json.dumps(metrics, ensure_ascii=False)}
+
+    Ты арт-директор. Твоя задача — отобрать ТОП-5 персонажей для создания качественного 3D-арта на СЕГОДНЯШНИЙ день.
+    Сформируй две выборки:
+    1. world_top: ТОП-5 по мировому тренду (высокий ER, интерес на западных и азиатских арт-площадках).
+    2. ru_top: ТОП-5 с учетом предпочтений СНГ/РФ аудитории (гачи + культовая классика: Ведьмак, Киберпанк, Nier, Resident Evil).
+
+    Формат ответа СТРОГО JSON:
+    {{
+      "world_top": [
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Четкое обоснование", "tags": ["tag1", "tag2", "tag3"] }}
+      ],
+      "ru_top": [
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Четкое обоснование", "tags": ["tag1", "tag2", "tag3"] }}
+      ]
+    }}
+    """
+
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseMimeType": "application/json"}
+    }
+
+    last_err = None
+    for model_name in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=20)
+            if resp.status_code == 200:
+                result_json = resp.json()
+                raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
+                return json.loads(raw_text)
+            else:
+                last_err = resp.text
+        except Exception as e:
+            last_err = str(e)
+            continue
+
+    raise RuntimeError(f"Ошибка вызова API Gemini: {last_err}")
+
+
+# --- УПРАВЛЕНИЕ ЗАПУСКОМ И СОСТОЯНИЕМ ---
+
+col_btn, col_status = st.columns([1, 3])
+
+with col_btn:
+    start_scan = st.button("🚀 Запустить глубокий скан рынка", type="primary", use_container_width=True)
+
+log_placeholder = st.empty()
+
+if start_scan:
+    if not api_key:
+        st.error("⚠️ Укажите Gemini API Key в левой панели перед запуском.")
+    else:
+        with log_placeholder.container():
+            st.write("📡 Подключение к базам данных... Опрос площадок...")
+            start_t = time.time()
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                raw_metrics = list(executor.map(fetch_art_stats, CHARACTERS))
+            fetch_duration = time.time() - start_t
+
+            zero_metric_count = sum(1 for m in raw_metrics if m['Суммарный скор'] == 0)
+            if zero_metric_count > len(CHARACTERS) * 0.8:
+                st.warning(
+                    "⚠️ Большинство баз вернули 0. Включите системный VPN на ПК для подгрузки реальных значений ER.")
+            else:
+                st.write(f"✅ Данные собраны за {fetch_duration:.2f} сек. Отправка в нейросеть...")
+
+            try:
+                ai_start_t = time.time()
+                ai_response = request_gemini_analysis(raw_metrics, api_key)
+                ai_duration = time.time() - ai_start_t
+
+                # Сохраняем в состояние сессии
+                st.session_state['ai_results'] = ai_response
+                st.session_state['metrics_df'] = pd.DataFrame(raw_metrics).sort_values(by="ER (Вовлеченность)",
+                                                                                       ascending=False)
+                st.session_state['scan_done'] = True
+                st.success(f"Анализ завершен! (Сбор: {fetch_duration:.1f}с | ИИ: {ai_duration:.1f}с)")
+            except Exception as ex:
+                st.error(f"Ошибка при анализе: {ex}")
+
+# --- ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ ЧЕРЕЗ ВКЛАДКИ ---
+
+if st.session_state.get('scan_done', False):
+    st.divider()
+    tab_world, tab_ru, tab_all = st.tabs([
+        "🌍 ТОП-5 Мировой тренд",
+        "🇷🇺 ТОП-5 СНГ и РФ",
+        "💯 Полный рейтинг (Все героини)"
+    ])
+
+    top_data = st.session_state['ai_results']
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+    classes = ["top1", "top2", "top3", "top4", "top5"]
+
+    with tab_world:
+        st.subheader("Лидеры глобального спроса")
+        for idx, item in enumerate(top_data.get('world_top', [])[:5]):
+            tags = " ".join([f"<span class='badge'>#{t}</span>" for t in item.get('tags', [])])
+            st.markdown(f"""
+            <div class="metric-card {classes[idx]}">
+                <h3>{medals[idx]} {item['name']} <span style="font-size:15px; color:#888;">({item['game']})</span></h3>
+                <p><b>Обоснование:</b> {item['analysis']}</p>
+                <div>{tags}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with tab_ru:
+        st.subheader("Лидеры спроса в СНГ / РФ")
+        for idx, item in enumerate(top_data.get('ru_top', [])[:5]):
+            tags = " ".join([f"<span class='badge'>#{t}</span>" for t in item.get('tags', [])])
+            st.markdown(f"""
+            <div class="metric-card {classes[idx]}">
+                <h3>{medals[idx]} {item['name']} <span style="font-size:15px; color:#888;">({item['game']})</span></h3>
+                <p><b>Обоснование:</b> {item['analysis']}</p>
+                <div>{tags}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with tab_all:
+        st.subheader("Сводная таблица вовлеченности (ER) всех отслеживаемых персонажей")
+        st.dataframe(st.session_state['metrics_df'], use_container_width=True, hide_index=True)
