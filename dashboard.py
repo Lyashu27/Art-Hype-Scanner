@@ -3,95 +3,114 @@ import pandas as pd
 import requests
 import json
 import time
-import plotly.express as px
+from datetime import datetime
 
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
-st.set_page_config(page_title="AI Art Agent Pro", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="AI Art Agent: Viral Radar", page_icon="🔥", layout="wide")
 
 st.markdown("""
 <style>
     .metric-card {background-color: #1a1c23; padding: 20px; border-radius: 12px; border-left: 5px solid #ff4b4b; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);}
+    .hero-card {background: linear-gradient(135deg, #ff4b4b 0%, #8b0000 100%); padding: 30px; border-radius: 16px; margin-bottom: 25px; color: white; box-shadow: 0 10px 20px rgba(255, 75, 75, 0.3); border: 1px solid #ff7676;}
+    .hero-title {font-size: 32px; font-weight: 800; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px;}
+    .hero-subtitle {font-size: 18px; opacity: 0.9; margin-bottom: 15px;}
+    .hero-news {background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px; font-size: 15px; border-left: 4px solid #ffd700;}
     .top1 {border-left-color: #ffd700;} 
     .top2 {border-left-color: #c0c0c0;} 
     .top3 {border-left-color: #cd7f32;}
     .badge {background-color: #2b2d35; padding: 4px 10px; border-radius: 6px; font-size: 13px; margin-right: 6px; color: #a5b1c2; border: 1px solid #3d404b;}
+    .gacha-badge {background-color: #4b8bff; color: white; padding: 3px 8px; border-radius: 4px; font-size: 11px; text-transform: uppercase;}
+    .aaa-badge {background-color: #ff4b8b; color: white; padding: 3px 8px; border-radius: 4px; font-size: 11px; text-transform: uppercase;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- БЕЗОПАСНАЯ ЗАГРУЗКА КЛЮЧА ---
+# --- ЗАГРУЗКА КЛЮЧА ---
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except:
-    api_key = st.sidebar.text_input("Gemini API Key (Секрет не настроен):", type="password")
+    api_key = st.sidebar.text_input("Gemini API Key:", type="password")
 
-st.title("🧠 AI Art Agent: Глубокий анализ рынка")
-st.markdown("Нейросеть самостоятельно извлекает данные о популярности персонажей, верифицирует их и формирует стратегию для 3D-артов.")
+st.title("🔥 Viral Radar: Аналитика 3D-арта")
+st.markdown("Поиск самых хайповых женских персонажей на основе алгоритмов соцсетей, новостей и релизов.")
 
+# --- БОКОВАЯ ПАНЕЛЬ И ФИЛЬТРЫ ---
 with st.sidebar:
-    if api_key:
-        st.success("✅ Gemini Agent подключен")
+    st.header("Настройки сканирования")
+    
+    time_filter = st.selectbox(
+        "⏳ Временной фильтр:",
+        ["За 24 часа (Мгновенный хайп)", "За 3 дня (Свежие тренды)", "За 7 дней (Стабильный рост)"]
+    )
+    
     st.divider()
-    st.info("💡 **Новая архитектура:** Мы больше не парсим сайты напрямую. ИИ-агент сам оценивает объем фан-арта, индекс хайпа и тренды на основе актуальных данных из соцсетей (X, Pixiv, Reddit).")
+    st.info("🧠 **Алгоритм виральности:** ИИ учитывает не только объем фанартов, но и влияние СМИ (выход патчей, сливы, анонсы). Абсолютный лидер выводится в отдельный блок.")
 
-# --- БАЗА ПЕРСОНАЖЕЙ (Для передачи Агенту) ---
+# --- БАЗА ПЕРСОНАЖЕЙ (С флагом Гача/Не Гача) ---
 CHARACTERS = [
-    # ZZZ & WuWa
-    "Jane Doe (ZZZ)", "Ellen Joe (ZZZ)", "Miyabi (ZZZ)", "Zhu Yuan (ZZZ)", "Nicole Demara (ZZZ)", "Yinlin (Wuthering Waves)", "Changli (Wuthering Waves)",
-    # Honkai: Star Rail
-    "Firefly (HSR)", "Acheron (HSR)", "Kafka (HSR)", "Black Swan (HSR)", "Ruan Mei (HSR)", "Sparkle (HSR)", "Jingliu (HSR)", "Feixiao (HSR)",
-    # Genshin Impact
-    "Furina (Genshin)", "Raiden Shogun (Genshin)", "Yelan (Genshin)", "Navia (Genshin)", "Arlecchino (Genshin)", "Hu Tao (Genshin)",
-    # Классика & AAA
-    "2B (NieR)", "Tifa Lockhart (FF7)", "Ada Wong (Resident Evil)", "Eve (Stellar Blade)", "Ciri (Witcher)", "Lucy (Cyberpunk Edgerunners)",
-    # Соревновательные
-    "D.Va (Overwatch)", "Ahri (LoL)", "Jinx (LoL)", "Viper (Valorant)", "Chun-Li (Street Fighter)", "Juri Han (Street Fighter)"
+    {"name": "Jane Doe", "game": "ZZZ", "is_gacha": True},
+    {"name": "Ellen Joe", "game": "ZZZ", "is_gacha": True},
+    {"name": "Miyabi", "game": "ZZZ", "is_gacha": True},
+    {"name": "Zhu Yuan", "game": "ZZZ", "is_gacha": True},
+    {"name": "Firefly", "game": "Honkai: Star Rail", "is_gacha": True},
+    {"name": "Acheron", "game": "Honkai: Star Rail", "is_gacha": True},
+    {"name": "Kafka", "game": "Honkai: Star Rail", "is_gacha": True},
+    {"name": "Feixiao", "game": "Honkai: Star Rail", "is_gacha": True},
+    {"name": "Furina", "game": "Genshin Impact", "is_gacha": True},
+    {"name": "Raiden Shogun", "game": "Genshin Impact", "is_gacha": True},
+    {"name": "Arlecchino", "game": "Genshin Impact", "is_gacha": True},
+    {"name": "Mavuika", "game": "Genshin Impact", "is_gacha": True},
+    {"name": "Yinlin", "game": "Wuthering Waves", "is_gacha": True},
+    {"name": "Changli", "game": "Wuthering Waves", "is_gacha": True},
+    {"name": "2B", "game": "NieR:Automata", "is_gacha": False},
+    {"name": "Tifa Lockhart", "game": "Final Fantasy VII", "is_gacha": False},
+    {"name": "Ada Wong", "game": "Resident Evil", "is_gacha": False},
+    {"name": "Eve", "game": "Stellar Blade", "is_gacha": False},
+    {"name": "Ciri", "game": "The Witcher", "is_gacha": False},
+    {"name": "D.Va", "game": "Overwatch", "is_gacha": False},
+    {"name": "Ahri", "game": "League of Legends", "is_gacha": False},
+    {"name": "Shadowheart", "game": "Baldur's Gate 3", "is_gacha": False},
+    {"name": "Lucy", "game": "Cyberpunk Edgerunners", "is_gacha": False}
 ]
 
 # --- АГЕНТНАЯ ФУНКЦИЯ GEMINI ---
-def agentic_market_analysis(char_list, key):
-    # Подбор модели с акцентом на сложные логические задачи
-    supported_models = []
-    try:
-        list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
-        res = requests.get(list_url, timeout=8).json()
-        for m in res.get('models', []):
-            if 'generateContent' in m.get('supportedGenerationMethods', []):
-                name = m.get('name', '').replace('models/', '')
-                # Ищем модели, способные к глубокому анализу
-                if 'flash' in name.lower() and 'lite' not in name.lower():
-                    supported_models.append(name)
-    except:
-        pass
-
-    fallback_models = ["gemini-2.5-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
-    models_to_try = supported_models + [m for m in fallback_models if m not in supported_models]
+def agentic_market_analysis(char_list, time_scope, key):
+    # Оставляем только Flash модели для скорости и точности
+    models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+    
+    current_date = datetime.now().strftime("%Y-%m-%d")
 
     prompt = f"""
-    Ты выступаешь в роли ведущего аналитика данных и арт-директора. Твоя задача — провести глубокое исследование рынка для 3D-художника.
-    Художник создает высококачественный 3D-арт женских персонажей и публикует его на 15+ площадках (X, Pixiv, ArtStation, Patreon и др.), а также работает с аудиторией из РФ и СНГ.
+    Действуй как аналитик трендов и элитный арт-директор. Сегодня {current_date}. 
+    Тебе передан список женских персонажей видеоигр: {json.dumps(char_list, ensure_ascii=False)}
 
-    Вот список персонажей для анализа:
-    {json.dumps(char_list, ensure_ascii=False)}
-
-    Шаг 1. Самостоятельный сбор данных: 
-    Оцени текущую популярность каждого персонажа в интернете (соцсети, арты, запросы). Удостоверься в правдивости оценки — не завышай мертвые тренды и не занижай актуальные хайп-поезда.
-    Оцени "Индекс хайпа" (от 1 до 100) и "Объем фан-контента" (от 1 до 100).
+    Твоя задача — проанализировать их виральность СТРОГО за период: {time_scope}.
+    Учитывай аудиторию РФ/СНГ и глобальные площадки дистрибуции (15+ арт-галерей и соцсетей). 
     
-    Шаг 2. Анализ и фильтрация:
-    Основываясь на сгенерированных тобой метриках, выбери ТОП-5 персонажей для глобального рынка и ТОП-5 для рынка СНГ/РФ.
+    Алгоритм вычисления "virality_score" (от 1 до 100):
+    1. Объем поисковых запросов и фанарта за указанный период.
+    2. Скорость роста популярности.
+    3. Наличие свежих инфоповодов (релизы патчей, анонсы в СМИ, крупные утечки, мемы в сообществе). Без инфоповода оценка не может быть выше 85.
 
-    Верни ответ СТРОГО в виде единого JSON объекта без маркдауна и лишнего текста:
+    Формат ответа СТРОГО JSON:
     {{
-      "metrics": [
-        {{ "name": "Имя персонажа", "category": "Франшиза", "hype_score": 95, "content_volume": 80, "trend": "Растет/Падает/Стабилен" }}
-      ],
+      "overall_top_1": {{
+        "name": "Имя абсолютного лидера",
+        "game": "Игра",
+        "virality_score": 99,
+        "recent_news": "Какой именно инфоповод или новость в СМИ вызвали этот хайп (укажи детали)",
+        "tags": ["3dart", "tag2"]
+      }},
       "world_top": [
-        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Почему этот 3D-арт разорвет алгоритмы площадок", "tags": ["3dart", "tag2"] }}
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Краткое обоснование спроса на западе/в Азии", "tags": ["tag1", "tag2"] }}
       ],
       "ru_top": [
-        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Почему это будет популярно в СНГ", "tags": ["3dart", "tag2"] }}
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Краткое обоснование спроса в РФ/СНГ", "tags": ["tag1", "tag2"] }}
+      ],
+      "metrics": [
+        {{ "name": "Имя", "game": "Игра", "is_gacha": true_или_false, "virality_score": 80, "recent_news": "Событие или патч (если есть, иначе пусто)", "trend": "Растет/Спадает" }}
       ]
     }}
+    В массиве metrics должны быть оценены ВСЕ переданные персонажи.
     """
     
     headers = {"Content-Type": "application/json"}
@@ -101,11 +120,9 @@ def agentic_market_analysis(char_list, key):
     for model_name in models_to_try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
         try:
-            # Увеличен таймаут, так как ИИ нужно "подумать" над большой генерацией
             resp = requests.post(url, headers=headers, json=payload, timeout=40)
             if resp.status_code == 200:
                 raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
-                # Очистка от возможных markdown тегов ```json ... ```
                 if raw_text.startswith("```json"): raw_text = raw_text[7:]
                 if raw_text.startswith("```"): raw_text = raw_text[3:]
                 if raw_text.endswith("```"): raw_text = raw_text[:-3]
@@ -120,31 +137,29 @@ def agentic_market_analysis(char_list, key):
     raise RuntimeError(f"Сбой AI-агента. Детали: {last_err}")
 
 # --- ИНТЕРФЕЙС И ЗАПУСК ---
-if st.button("🚀 Делегировать анализ ИИ-агенту", type="primary", use_container_width=True):
+if st.button(f"🚀 Сгенерировать отчет ({time_filter})", type="primary", use_container_width=True):
     if not api_key:
         st.error("⚠️ Укажите Gemini API Key.")
     else:
         status_text = st.empty()
         progress_bar = st.progress(0)
         
-        status_text.markdown("🧠 **ИИ-агент:** Поднимаю архивы данных. Оцениваю тренды Pixiv, X и Reddit... (Ожидание ~15-20 секунд)")
-        progress_bar.progress(30)
+        status_text.markdown(f"🧠 **ИИ-агент:** Поднимаю новостные сводки и проверяю тренды {time_filter.lower()}... (Ожидание ~15 сек)")
+        progress_bar.progress(40)
         
         start_t = time.time()
         
         try:
-            # Один большой запрос к ИИ, который делает всё сам
-            ai_data, model_used = agentic_market_analysis(CHARACTERS, api_key)
-            progress_bar.progress(80)
+            ai_data, model_used = agentic_market_analysis(CHARACTERS, time_filter, api_key)
+            progress_bar.progress(90)
             
-            status_text.markdown("🧠 **ИИ-агент:** Данные верифицированы. Формирую списки лидеров для 3D-арта...")
-            
-            # Извлекаем метрики в DataFrame для графиков
-            metrics_data = ai_data.get('metrics', [])
-            df = pd.DataFrame(metrics_data)
+            # Подготовка данных для таблиц
+            df = pd.DataFrame(ai_data.get('metrics', []))
             
             st.session_state['results'] = ai_data
             st.session_state['df'] = df
+            st.session_state['time_scope'] = time_filter
+            st.session_state['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             st.session_state['done'] = True
             
             progress_bar.progress(100)
@@ -152,58 +167,89 @@ if st.button("🚀 Делегировать анализ ИИ-агенту", typ
             progress_bar.empty()
             
             ai_duration = time.time() - start_t
-            st.toast(f"Агент завершил работу! (Модель: {model_used} | Время: {ai_duration:.1f}с)", icon="✅")
+            st.toast(f"Отчет сформирован! (Модель: {model_used} | Время: {ai_duration:.1f}с)", icon="✅")
             
         except Exception as ex:
             st.error(f"Критическая ошибка ИИ: {ex}")
 
 # --- ВЫВОД РЕЗУЛЬТАТОВ ---
 if st.session_state.get('done', False):
-    df = st.session_state['df']
     results = st.session_state['results']
+    df = st.session_state['df']
+    
+    st.caption(f"⏱️ **Актуальность данных проверена:** {st.session_state['timestamp']} | **Фирез:** {st.session_state['time_scope']}")
+    
+    # --- БЛОК АБСОЛЮТНОГО ЛИДЕРА (Топ 1) ---
+    top1 = results.get('overall_top_1', {})
+    if top1:
+        tags_html = " ".join([f"<span class='badge'>#{t}</span>" for t in top1.get('tags', [])])
+        st.markdown(f"""
+        <div class="hero-card">
+            <div style="text-transform: uppercase; letter-spacing: 2px; font-size: 12px; margin-bottom: 10px; color: #ffd700;">👑 Абсолютный виральный лидер</div>
+            <div class="hero-title">{top1.get('name', 'N/A')} <span style="font-size: 24px; font-weight: 400; opacity: 0.8;">— {top1.get('game', '')}</span></div>
+            <div class="hero-subtitle">Виральный индекс: <b>{top1.get('virality_score', 0)} / 100</b></div>
+            <div class="hero-news">
+                📰 <b>Главный инфоповод:</b> {top1.get('recent_news', 'Нет актуальных новостей')}
+            </div>
+            <div style="margin-top: 15px;">{tags_html}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # --- ТОПЫ ИИ ПО РЕГИОНАМ ---
+    col_w, col_r = st.columns(2)
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
-    classes = ["top1", "top2", "top3", "top4", "top5"]
+    classes = ["top1", "top2", "top3", "", ""]
 
-    st.divider()
-    
-    # Визуализация данных, сгенерированных ИИ
-    st.subheader("📊 Аналитика рынка (По оценке Gemini Agent)")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        fig_bar = px.bar(
-            df.sort_values(by="hype_score", ascending=False).head(10), 
-            x="hype_score", y="name", orientation="h",
-            color="hype_score", color_continuous_scale="Inferno",
-            title="🔥 Топ-10: Индекс Хайпа", template="plotly_dark"
-        )
-        fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
-        st.plotly_chart(fig_bar, use_container_width=True)
-        
-    with col2:
-        fig_bubble = px.scatter(
-            df, x="content_volume", y="hype_score", size="hype_score",
-            color="category", hover_name="name", symbol="trend",
-            title="Матрица: Объем рынка vs Хайп (Форма = Тренд)", template="plotly_dark", size_max=35
-        )
-        st.plotly_chart(fig_bubble, use_container_width=True)
-
-    tab_w, tab_r, tab_all = st.tabs(["🌍 Глобальный выбор ИИ", "🇷🇺 Выбор ИИ для СНГ", "🗄️ База метрик (Оценка ИИ)"])
-
-    def render_list(key):
-        for idx, item in enumerate(results.get(key, [])[:5]):
+    with col_w:
+        st.subheader("🌍 Мировой тренд (Топ-5)")
+        for idx, item in enumerate(results.get('world_top', [])[:5]):
             tags = " ".join([f"<span class='badge'>#{t}</span>" for t in item.get('tags', [])])
             st.markdown(f"""
             <div class="metric-card {classes[idx]}">
-                <h3>{medals[idx]} {item['name']} <span style="font-size:15px; color:#888;">({item['game']})</span></h3>
-                <p>{item['analysis']}</p>
+                <h4 style="margin-bottom: 5px;">{medals[idx]} {item['name']} <span style="font-size:14px; color:#888;">({item['game']})</span></h4>
+                <p style="font-size: 14px; color: #dfe4ea;">{item['analysis']}</p>
                 <div>{tags}</div>
             </div>
             """, unsafe_allow_html=True)
 
-    with tab_w:
-        render_list('world_top')
-    with tab_r:
-        render_list('ru_top')
-    with tab_all:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    with col_r:
+        st.subheader("🇷🇺 СНГ и РФ (Топ-5)")
+        for idx, item in enumerate(results.get('ru_top', [])[:5]):
+            tags = " ".join([f"<span class='badge'>#{t}</span>" for t in item.get('tags', [])])
+            st.markdown(f"""
+            <div class="metric-card {classes[idx]}">
+                <h4 style="margin-bottom: 5px;">{medals[idx]} {item['name']} <span style="font-size:14px; color:#888;">({item['game']})</span></h4>
+                <p style="font-size: 14px; color: #dfe4ea;">{item['analysis']}</p>
+                <div>{tags}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.divider()
+
+    # --- РАЗДЕЛЕНИЕ БАЗЫ: ГАЧИ VS ОСТАЛЬНЫЕ ---
+    st.subheader("🗄️ Полная сводка виральности")
+    
+    df_sorted = df.sort_values(by="virality_score", ascending=False)
+    
+    # Фильтрация датафреймов
+    df_gacha = df_sorted[df_sorted['is_gacha'] == True].drop(columns=['is_gacha']).reset_index(drop=True)
+    df_classic = df_sorted[df_sorted['is_gacha'] == False].drop(columns=['is_gacha']).reset_index(drop=True)
+    
+    # Переименование колонок для красоты интерфейса
+    column_config = {
+        "name": "Персонаж",
+        "game": "Франшиза",
+        "virality_score": st.column_config.ProgressColumn("Виральность", help="Виральный индекс (0-100)", format="%f", min_value=0, max_value=100),
+        "recent_news": "Инфоповод / СМИ",
+        "trend": "Тренд"
+    }
+
+    tab_gacha, tab_classic = st.tabs(["🎲 Гача-Игры (Агрессивные тренды)", "⚔️ AAA, RPG и Соревновательные (Классика)"])
+    
+    with tab_gacha:
+        st.caption("Персонажи из Genshin Impact, HSR, ZZZ и WuWa. Тренды здесь сильно зависят от выхода патчей и баннеров.")
+        st.dataframe(df_gacha, use_container_width=True, hide_index=True, column_config=column_config, height=500)
+        
+    with tab_classic:
+        st.caption("Персонажи из файтингов, синглплеерных хитов и киберспорта. Спрос базируется на лояльности фандома и релизах DLC/аниме.")
+        st.dataframe(df_classic, use_container_width=True, hide_index=True, column_config=column_config, height=500)
