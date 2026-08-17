@@ -106,14 +106,31 @@ def fetch_art_stats(char):
     return {"Персонаж": char['name'], "Франшиза": char['game'], "Конкуренция (Новых работ)": 0, "Суммарный скор": 0, "ER (Вовлеченность)": 0}
 
 # --- ИИ АНАЛИЗ ---
+# --- ИИ АНАЛИЗ С ДИНАМИЧЕСКИМ ПОДБОРОМ МОДЕЛИ ---
 def request_gemini_analysis(metrics, key):
-    models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-latest"]
+    # 1. Получаем список моделей, которые реально доступны для данного ключа
+    supported_models = []
+    try:
+        list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        res = requests.get(list_url, timeout=8).json()
+        for m in res.get('models', []):
+            if 'generateContent' in m.get('supportedGenerationMethods', []):
+                name = m.get('name', '').replace('models/', '')
+                if 'flash' in name.lower() and 'lite' not in name.lower():
+                    supported_models.append(name)
+    except Exception:
+        pass
+
+    # Резервный список на случай недоступности list_models
+    fallback_models = ["gemini-2.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-pro"]
     
+    models_to_try = supported_models + [m for m in fallback_models if m not in supported_models]
+
     prompt = f"""
     Ты креативный арт-директор. Проанализируй эти точные метрики (ER - вовлеченность, Конкуренция - объем новых работ):
     {json.dumps(metrics, ensure_ascii=False)}
 
-    Отбери ТОП-5 женских персонажей для качественного 3D-арта (расчет на веерную публикацию по 15+ площадкам).
+    Отбери ТОП-5 женских персонажей для качественного 3D-арта (расчет на публикацию по 15+ площадкам).
     Выборки:
     1. world_top: Глобальный тренд.
     2. ru_top: Вкусы СНГ (гачи + классика).
@@ -128,21 +145,28 @@ def request_gemini_analysis(metrics, key):
       ]
     }}
     """
+    
     headers = {"Content-Type": "application/json"}
-    payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"responseMimeType": "application/json"}}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseMimeType": "application/json"}
+    }
 
     last_err = ""
     for model_name in models_to_try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=20)
+            resp = requests.post(url, headers=headers, json=payload, timeout=25)
             if resp.status_code == 200:
                 raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
                 return json.loads(raw_text), model_name
+            else:
+                last_err = f"[{model_name}] {resp.status_code}: {resp.text}"
         except Exception as e:
-            last_err = str(e)
+            last_err = f"[{model_name}] {str(e)}"
             continue
-    raise RuntimeError("Сбой API Gemini")
+
+    raise RuntimeError(f"Сбой API Gemini. Детали: {last_err}")
 
 # --- ИНТЕРФЕЙС И ЗАПУСК ---
 if st.button("🚀 Запустить нейросканирование рынка", type="primary", use_container_width=True):
