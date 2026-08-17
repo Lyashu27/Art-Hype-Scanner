@@ -4,6 +4,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor
 import json
 import time
+import urllib.parse
 
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
 st.set_page_config(page_title="3D Art Hype Scanner", page_icon="🎨", layout="wide")
@@ -27,7 +28,7 @@ with st.sidebar:
     st.header("Настройки")
     api_key = st.text_input("Gemini API Key:", type="password")
     st.divider()
-    st.info("💡 **Как работает сбор:** Система опрашивает открытые API крупнейших арт-архивов. Если метрики собраны успешно, алгоритм рассчитает ER (вовлеченность) для выявления хайпа.")
+    st.info("💡 **Защита от блокировок:** Активирован прокси-шлюз для обхода Cloudflare. Метрики по гачам (ZZZ, HSR) теперь будут собираться корректно.")
 
 # --- БАЗА ТЕГОВ ---
 CHARACTERS = [
@@ -71,44 +72,45 @@ CHARACTERS = [
     {"name": "Jinx", "tag": "jinx_(league_of_legends)", "game": "League of Legends"}
 ]
 
-# --- КАСКАДНЫЙ СБОР МЕТРИК (Обход Cloudflare) ---
+# --- СИСТЕМА ОБХОДА БЛОКИРОВОК (ПРОКСИРОВАНИЕ) ---
 
 def fetch_art_stats(char):
-    time.sleep(0.3) 
+    time.sleep(0.5) # Пауза для стабильности прокси
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    encoded_tag = urllib.parse.quote(char['tag'])
     
-    # Список API в порядке отказоустойчивости для облачных IP
-    endpoints = [
-        ("https://api.rule34.xxx/index.php", {"page": "dapi", "s": "post", "q": "index", "json": 1, "limit": 40, "tags": char['tag']}),
-        ("https://danbooru.donmai.us/posts.json", {"limit": 40, "tags": char['tag']}),
-        ("https://safebooru.org/index.php", {"page": "dapi", "s": "post", "q": "index", "json": 1, "limit": 40, "tags": char['tag']})
-    ]
+    # 1. Запрос к Gelbooru через прокси-шлюз AllOrigins
+    gelbooru_target = f"https://gelbooru.com/index.php?page=dapi&s=post&q=index&json=1&limit=40&tags={encoded_tag}"
+    proxy_url_1 = f"https://api.allorigins.win/raw?url={urllib.parse.quote(gelbooru_target)}"
+    
+    try:
+        res = requests.get(proxy_url_1, headers=headers, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            posts = data.get('post', []) if isinstance(data, dict) else []
+            if posts:
+                score = sum(int(p.get('score', 0)) for p in posts)
+                count = len(posts)
+                er = round((score / count), 2) if count > 0 else 0
+                return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": count, "Суммарный скор": score, "ER (Вовлеченность)": er}
+    except:
+        pass
 
-    for url, params in endpoints:
-        try:
-            res = requests.get(url, params=params, headers=headers, timeout=6)
-            if res.status_code == 200:
-                posts = res.json()
-                
-                # Некоторые API отдают словарь с ключом 'post', другие - сразу список
-                if isinstance(posts, dict) and 'post' in posts:
-                    posts = posts['post']
-                    
-                if isinstance(posts, list) and len(posts) > 0:
-                    # Универсальный подсчет лайков (score)
-                    score = sum(int(p.get('score', 0)) + int(p.get('up_score', 0)) for p in posts)
-                    count = len(posts)
-                    er = round((score / count), 2) if count > 0 else 0
-                    
-                    return {
-                        "Персонаж": char['name'], 
-                        "Франшиза": char['game'], 
-                        "Новых работ": count, 
-                        "Суммарный скор": score, 
-                        "ER (Вовлеченность)": er
-                    }
-        except Exception:
-            continue
+    # 2. Резервный запрос к Danbooru через прокси-шлюз
+    danbooru_target = f"https://danbooru.donmai.us/posts.json?limit=40&tags={encoded_tag}"
+    proxy_url_2 = f"https://api.allorigins.win/raw?url={urllib.parse.quote(danbooru_target)}"
+    
+    try:
+        res = requests.get(proxy_url_2, headers=headers, timeout=10)
+        if res.status_code == 200:
+            posts = res.json()
+            if isinstance(posts, list) and len(posts) > 0:
+                score = sum(int(p.get('score', 0)) + int(p.get('up_score', 0)) for p in posts)
+                count = len(posts)
+                er = round((score / count), 2) if count > 0 else 0
+                return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": count, "Суммарный скор": score, "ER (Вовлеченность)": er}
+    except:
+        pass
 
     return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": 0, "Суммарный скор": 0, "ER (Вовлеченность)": 0}
 
@@ -136,6 +138,7 @@ def request_gemini_analysis(metrics, key):
         if "flash" in model.lower() and "lite" not in model.lower() and model not in models_to_try:
             models_to_try.append(model)
 
+    # Промпт переписан строго под 3D арт (без лишнего софта)
     prompt = f"""
     Проанализируй эти точные метрики спроса (ER - вовлеченность, Новых работ - конкуренция):
     {json.dumps(metrics, ensure_ascii=False)}
@@ -145,7 +148,7 @@ def request_gemini_analysis(metrics, key):
 
     Сформируй две выборки:
     1. world_top: ТОП-5 по мировому тренду (высокий ER, глобальный интерес).
-    2. ru_top: ТОП-5 с учетом предпочтений СНГ/РФ аудитории (гачи + классика вроде Ведьмака, Киберпанка, Nier).
+    2. ru_top: ТОП-5 с учетом предпочтений СНГ/РФ аудитории (гачи + классика).
 
     Формат ответа СТРОГО JSON:
     {{
@@ -195,15 +198,14 @@ if start_scan:
         st.error("⚠️ Укажите Gemini API Key.")
     else:
         with log_placeholder.container():
-            st.write("📡 Сбор каскадных данных (обход блокировок дата-центров)... Это займет около 10-15 секунд.")
+            st.write("📡 Сбор данных через прокси-сервер (обход блокировок)... Это займет около 15-20 секунд.")
             start_t = time.time()
             
-            # Уменьшен пул потоков до 5 для безопасного парсинга без rate-limit
-            with ThreadPoolExecutor(max_workers=5) as executor:
+            # Потоки ограничены до 4, чтобы бесплатный прокси не заблокировал нас за спам
+            with ThreadPoolExecutor(max_workers=4) as executor:
                 raw_metrics = list(executor.map(fetch_art_stats, CHARACTERS))
             fetch_duration = time.time() - start_t
             
-            # Проверка на нули для логов
             zero_count = sum(1 for m in raw_metrics if m['Новых работ'] == 0)
             st.write(f"✅ Успешно проанализировано {len(CHARACTERS) - zero_count} из {len(CHARACTERS)} персонажей за {fetch_duration:.2f} сек. Отправка в ИИ...")
             
