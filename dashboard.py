@@ -6,7 +6,7 @@ import json
 import time
 
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
-st.set_page_config(page_title="AI Art Hype Scanner", page_icon="🎨", layout="wide")
+st.set_page_config(page_title="3D Art Hype Scanner", page_icon="🎨", layout="wide")
 
 st.markdown("""
 <style>
@@ -20,92 +20,77 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🎨 Аналитика 3D-фанарта: Глобальные и региональные тренды")
-st.markdown("Предиктивный отбор самых востребованных женских персонажей для создания 3D-артов.")
+st.title("🎨 Аналитика спроса: 3D-арт женских персонажей")
+st.markdown("Предиктивный отбор самых востребованных героинь для моделирования и рендеров.")
 
-# --- БОКОВАЯ ПАНЕЛЬ ---
 with st.sidebar:
     st.header("Настройки")
-    api_key = st.text_input("Gemini API Key:", type="password", help="Ключ с aistudio.google.com")
+    api_key = st.text_input("Gemini API Key:", type="password")
     st.divider()
 
-# --- БАЗА ПЕРСОНАЖЕЙ ---
+# --- ИСПРАВЛЕННАЯ БАЗА ТЕГОВ (Строгий синтаксис Danbooru/Safebooru) ---
 CHARACTERS = [
-    # ZZZ
     {"name": "Jane Doe", "tag": "jane_doe_(zenless_zone_zero)", "game": "ZZZ"},
-    {"name": "Ellen Joe", "tag": "ellen_joe", "game": "ZZZ"},
+    {"name": "Ellen Joe", "tag": "ellen_joe_(zenless_zone_zero)", "game": "ZZZ"},
     {"name": "Miyabi", "tag": "hoshimi_miyabi", "game": "ZZZ"},
     {"name": "Zhu Yuan", "tag": "zhu_yuan_(zenless_zone_zero)", "game": "ZZZ"},
     {"name": "Nicole Demara", "tag": "nicole_demara", "game": "ZZZ"},
-    # Honkai Star Rail
-    {"name": "Firefly", "tag": "firefly_(honkai:_star_rail)", "game": "Honkai Star Rail"},
-    {"name": "Acheron", "tag": "acheron_(honkai:_star_rail)", "game": "Honkai Star Rail"},
-    {"name": "Kafka", "tag": "kafka_(honkai:_star_rail)", "game": "Honkai Star Rail"},
-    {"name": "Black Swan", "tag": "black_swan_(honkai:_star_rail)", "game": "Honkai Star Rail"},
-    {"name": "Ruan Mei", "tag": "ruan_mei_(honkai:_star_rail)", "game": "Honkai Star Rail"},
-    {"name": "Sparkle", "tag": "sparkle_(honkai:_star_rail)", "game": "Honkai Star Rail"},
-    {"name": "Jingliu", "tag": "jingliu_(honkai:_star_rail)", "game": "Honkai Star Rail"},
-    # Genshin Impact
+    
+    {"name": "Firefly", "tag": "firefly_(honkai_star_rail)", "game": "Honkai Star Rail"},
+    {"name": "Acheron", "tag": "acheron_(honkai_star_rail)", "game": "Honkai Star Rail"},
+    {"name": "Kafka", "tag": "kafka_(honkai_star_rail)", "game": "Honkai Star Rail"},
+    {"name": "Black Swan", "tag": "black_swan_(honkai_star_rail)", "game": "Honkai Star Rail"},
+    {"name": "Ruan Mei", "tag": "ruan_mei_(honkai_star_rail)", "game": "Honkai Star Rail"},
+    {"name": "Sparkle", "tag": "sparkle_(honkai_star_rail)", "game": "Honkai Star Rail"},
+    {"name": "Jingliu", "tag": "jingliu_(honkai_star_rail)", "game": "Honkai Star Rail"},
+    
     {"name": "Furina", "tag": "furina_(genshin_impact)", "game": "Genshin Impact"},
     {"name": "Raiden Shogun", "tag": "raiden_shogun", "game": "Genshin Impact"},
     {"name": "Yelan", "tag": "yelan_(genshin_impact)", "game": "Genshin Impact"},
     {"name": "Navia", "tag": "navia_(genshin_impact)", "game": "Genshin Impact"},
     {"name": "Arlecchino", "tag": "arlecchino_(genshin_impact)", "game": "Genshin Impact"},
     {"name": "Hu Tao", "tag": "hu_tao_(genshin_impact)", "game": "Genshin Impact"},
-    {"name": "Ganyu", "tag": "ganyu_(genshin_impact)", "game": "Genshin Impact"},
-    # AAA & Classics
+    
     {"name": "Tifa Lockhart", "tag": "tifa_lockhart", "game": "Final Fantasy VII"},
     {"name": "Aerith Gainsborough", "tag": "aerith_gainsborough", "game": "Final Fantasy VII"},
     {"name": "2B", "tag": "yorha_no._2_type_b", "game": "NieR:Automata"},
     {"name": "Ada Wong", "tag": "ada_wong", "game": "Resident Evil"},
-    {"name": "Jill Valentine", "tag": "jill_valentine", "game": "Resident Evil"},
     {"name": "Eve", "tag": "eve_(stellar_blade)", "game": "Stellar Blade"},
     {"name": "Lara Croft", "tag": "lara_croft", "game": "Tomb Raider"},
-    # Fighting
+    
     {"name": "Chun-Li", "tag": "chun-li", "game": "Street Fighter"},
     {"name": "Cammy White", "tag": "cammy_white", "game": "Street Fighter"},
     {"name": "Juri Han", "tag": "juri_han", "game": "Street Fighter"},
-    # RPG & Shooters
+    
     {"name": "Ciri", "tag": "cirilla_fiona_elen_riannon", "game": "The Witcher"},
     {"name": "Yennefer", "tag": "yennefer_of_vengerberg", "game": "The Witcher"},
-    {"name": "Lucy", "tag": "lucyna_kushinada", "game": "Cyberpunk Edgerunners"},
+    {"name": "Lucy", "tag": "lucyna_kushinada", "game": "Cyberpunk"},
     {"name": "D.Va", "tag": "d.va_(overwatch)", "game": "Overwatch"},
-    {"name": "Kiriko", "tag": "kiriko_(overwatch)", "game": "Overwatch"},
     {"name": "Ahri", "tag": "ahri_(league_of_legends)", "game": "League of Legends"},
     {"name": "Jinx", "tag": "jinx_(league_of_legends)", "game": "League of Legends"}
 ]
 
-# --- НАДЕЖНЫЙ СБОР СТАТИСТИКИ (Safebooru + Danbooru) ---
+# --- УМНЫЙ СБОР ДАННЫХ (Защита от блокировок 429) ---
 
 def fetch_art_stats(char):
+    # Искусственная задержка для облачного сервера, чтобы не получить бан по IP
+    time.sleep(0.5) 
+    
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
     
-    # 1. Попытка через Safebooru API (открытый доступ без Cloudflare-капчи)
-    try:
-        url = "https://safebooru.org/index.php"
-        params = {"page": "dapi", "s": "post", "q": "index", "json": 1, "limit": 40, "tags": char['tag']}
-        res = requests.get(url, params=params, headers=headers, timeout=4)
-        if res.status_code == 200:
-            posts = res.json()
-            if isinstance(posts, list) and len(posts) > 0:
-                score = sum(int(p.get('score', 0)) for p in posts)
-                count = len(posts)
-                er = round((score / count) * 10, 2) if count > 0 else 0
-                return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": count, "Суммарный скор": score, "ER (Вовлеченность)": er}
-    except Exception:
-        pass
-
-    # 2. Резерв через Danbooru API
+    # Первичный опрос через Danbooru (Самая точная база по гачам)
     try:
         url = "https://danbooru.donmai.us/posts.json"
         params = {"limit": 40, "tags": char['tag']}
-        res = requests.get(url, params=params, headers=headers, timeout=4)
+        res = requests.get(url, params=params, headers=headers, timeout=5)
+        
         if res.status_code == 200:
             posts = res.json()
             if isinstance(posts, list) and len(posts) > 0:
-                score = sum(int(p.get('score', 0)) + int(p.get('fav_count', 0)) for p in posts)
+                # Danbooru хранит вовлеченность в полях score и fav_count
+                score = sum(int(p.get('score', 0)) + int(p.get('up_score', 0)) for p in posts)
                 count = len(posts)
                 er = round((score / count), 2) if count > 0 else 0
                 return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": count, "Суммарный скор": score, "ER (Вовлеченность)": er}
@@ -114,49 +99,49 @@ def fetch_art_stats(char):
 
     return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": 0, "Суммарный скор": 0, "ER (Вовлеченность)": 0}
 
-# --- ВЫЗОВ GEMINI FLASH (ИСКЛЮЧЕН LITE) ---
+# --- ВЫЗОВ GEMINI API ---
 
 def request_gemini_analysis(metrics, key):
-    # Пул приоритетов строго для полноценных Flash-моделей
-    flash_priorities = [
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-2.5-flash"
-    ]
-    
-    # Динамически получаем доступные модели аккаунта
-    account_models = []
+    dynamic_models = []
     try:
         list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
         res = requests.get(list_url, timeout=6).json()
         for m in res.get('models', []):
-            m_name = m.get('name', '').replace('models/', '')
-            # Исключаем lite
-            if 'flash' in m_name.lower() and 'lite' not in m_name.lower():
-                account_models.append(m_name)
-    except Exception:
+            if 'generateContent' in m.get('supportedGenerationMethods', []):
+                dynamic_models.append(m['name'].replace('models/', ''))
+    except:
         pass
 
-    # Собираем итоговый список без дубликатов (сначала то, что есть в аккаунте)
-    models_to_try = [m for m in account_models if m not in flash_priorities] + flash_priorities
+    fallback_pool = [
+        "gemini-2.0-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash"
+    ]
 
+    models_to_try = []
+    for model in dynamic_models + fallback_pool:
+        if "flash" in model.lower() and "lite" not in model.lower() and model not in models_to_try:
+            models_to_try.append(model)
+
+    # Промпт адаптирован строго под 3D-арт женских персонажей
     prompt = f"""
-    Проанализируй актуальные метрики популярности:
+    Проанализируй эти точные метрики спроса (ER - вовлеченность, Новых работ - конкуренция):
     {json.dumps(metrics, ensure_ascii=False)}
 
-    Ты арт-директор. Твоя задача — отобрать ТОП-5 персонажей для создания качественного 3D-арта на СЕГОДНЯШНИЙ день.
+    Твоя задача — отобрать ТОП-5 женских персонажей для создания качественного 3D-арта. 
+    Учитывай, что готовые работы будут активно публиковаться на 15+ различных арт-площадках и соцсетях. Нам нужны персонажи, которые дадут максимальный охват прямо сейчас.
+
     Сформируй две выборки:
-    1. world_top: ТОП-5 по мировому тренду (высокий ER, интерес на арт-площадках).
-    2. ru_top: ТОП-5 с учетом предпочтений СНГ/РФ аудитории (гачи + культовая классика: Ведьмак, Киберпанк, Nier, Resident Evil).
+    1. world_top: ТОП-5 по мировому тренду (высокий ER, глобальный интерес).
+    2. ru_top: ТОП-5 с учетом предпочтений СНГ/РФ аудитории (гачи + классика вроде Ведьмака, Киберпанка, Nier).
 
     Формат ответа СТРОГО JSON:
     {{
       "world_top": [
-        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Четкое обоснование", "tags": ["tag1", "tag2", "tag3"] }}
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Четкое обоснование выбора", "tags": ["3dart", "tag2", "tag3"] }}
       ],
       "ru_top": [
-        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Четкое обоснование", "tags": ["tag1", "tag2", "tag3"] }}
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Четкое обоснование выбора", "tags": ["3dart", "tag2", "tag3"] }}
       ]
     }}
     """
@@ -182,7 +167,7 @@ def request_gemini_analysis(metrics, key):
             last_err = str(e)
             continue
 
-    raise RuntimeError(f"Не удалось подключиться к Flash-моделям. Ошибка: {last_err}")
+    raise RuntimeError(f"Сбой моделей Gemini. Ошибка: {last_err}")
 
 # --- ИНТЕРФЕЙС И ЗАПУСК ---
 
@@ -195,16 +180,17 @@ log_placeholder = st.empty()
 
 if start_scan:
     if not api_key:
-        st.error("⚠️ Укажите Gemini API Key в левой панели перед запуском.")
+        st.error("⚠️ Укажите Gemini API Key.")
     else:
         with log_placeholder.container():
-            st.write("📡 Сбор данных по персонажам (Safebooru / Danbooru)...")
+            # Количество потоков снижено до 3 для стабильной работы без блокировок
+            st.write("📡 Осторожный сбор данных (защита от rate-limit)... Это займет около 10-15 секунд.")
             start_t = time.time()
-            with ThreadPoolExecutor(max_workers=20) as executor:
+            with ThreadPoolExecutor(max_workers=3) as executor:
                 raw_metrics = list(executor.map(fetch_art_stats, CHARACTERS))
             fetch_duration = time.time() - start_t
             
-            st.write(f"✅ Данные успешно собраны за {fetch_duration:.2f} сек. AI-анализ через Gemini Flash...")
+            st.write(f"✅ Данные успешно собраны за {fetch_duration:.2f} сек. Отправка в нейросеть...")
             
             try:
                 ai_start_t = time.time()
@@ -214,7 +200,7 @@ if start_scan:
                 st.session_state['ai_results'] = ai_response
                 st.session_state['metrics_df'] = pd.DataFrame(raw_metrics).sort_values(by="ER (Вовлеченность)", ascending=False)
                 st.session_state['scan_done'] = True
-                st.success(f"Анализ завершен через {model_used}! (Сбор: {fetch_duration:.1f}с | ИИ: {ai_duration:.1f}с)")
+                st.success(f"Анализ завершен ({model_used}). Сбор: {fetch_duration:.1f}с | ИИ: {ai_duration:.1f}с")
             except Exception as ex:
                 st.error(f"Ошибка при анализе: {ex}")
 
@@ -225,7 +211,7 @@ if st.session_state.get('scan_done', False):
     tab_world, tab_ru, tab_all = st.tabs([
         "🌍 ТОП-5 Мировой тренд", 
         "🇷🇺 ТОП-5 СНГ и РФ", 
-        "💯 Полный рейтинг (Все героини)"
+        "💯 Полный рейтинг"
     ])
     
     top_data = st.session_state['ai_results']
@@ -257,5 +243,5 @@ if st.session_state.get('scan_done', False):
             """, unsafe_allow_html=True)
 
     with tab_all:
-        st.subheader("Сводная таблица вовлеченности (ER) всех отслеживаемых персонажей")
+        st.subheader("Сводная таблица вовлеченности (ER)")
         st.dataframe(st.session_state['metrics_df'], use_container_width=True, hide_index=True)
