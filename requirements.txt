@@ -3,4 +3,4 @@ pandas
 requests
 plotly
 feedparser
-beautifulsoup4
+pyTelegramBotAPI
