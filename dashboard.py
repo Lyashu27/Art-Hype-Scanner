@@ -75,59 +75,74 @@ CHARACTERS = [
     {"name": "Jinx", "tag": "jinx_(league_of_legends)", "game": "League of Legends"}
 ]
 
-# --- СБОР СТАТИСТИКИ ---
+# --- НАДЕЖНЫЙ СБОР СТАТИСТИКИ (Safebooru + Danbooru) ---
 
 def fetch_art_stats(char):
-    url = "https://gelbooru.com/index.php"
-    params = {"page": "dapi", "s": "post", "q": "index", "json": 1, "limit": 60, "tags": char['tag']}
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/javascript, */*; q=0.01'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
     }
+    
+    # 1. Попытка через Safebooru API (открытый доступ без Cloudflare-капчи)
     try:
-        res = requests.get(url, params=params, headers=headers, timeout=5)
+        url = "https://safebooru.org/index.php"
+        params = {"page": "dapi", "s": "post", "q": "index", "json": 1, "limit": 40, "tags": char['tag']}
+        res = requests.get(url, params=params, headers=headers, timeout=4)
         if res.status_code == 200:
-            posts = res.json().get('post', [])
-            score = sum(int(p.get('score', 0)) for p in posts)
-            count = len(posts)
-            er = round(score / count, 2) if count > 0 else 0
-            return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": count, "Суммарный скор": score, "ER (Вовлеченность)": er}
-    except:
+            posts = res.json()
+            if isinstance(posts, list) and len(posts) > 0:
+                score = sum(int(p.get('score', 0)) for p in posts)
+                count = len(posts)
+                er = round((score / count) * 10, 2) if count > 0 else 0
+                return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": count, "Суммарный скор": score, "ER (Вовлеченность)": er}
+    except Exception:
         pass
+
+    # 2. Резерв через Danbooru API
+    try:
+        url = "https://danbooru.donmai.us/posts.json"
+        params = {"limit": 40, "tags": char['tag']}
+        res = requests.get(url, params=params, headers=headers, timeout=4)
+        if res.status_code == 200:
+            posts = res.json()
+            if isinstance(posts, list) and len(posts) > 0:
+                score = sum(int(p.get('score', 0)) + int(p.get('fav_count', 0)) for p in posts)
+                count = len(posts)
+                er = round((score / count), 2) if count > 0 else 0
+                return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": count, "Суммарный скор": score, "ER (Вовлеченность)": er}
+    except Exception:
+        pass
+
     return {"Персонаж": char['name'], "Франшиза": char['game'], "Новых работ": 0, "Суммарный скор": 0, "ER (Вовлеченность)": 0}
 
-# --- ВЫЗОВ GEMINI API С АВТОМАТИЧЕСКИМ ПЕРЕБОРОМ МОДЕЛЕЙ ---
+# --- ВЫЗОВ GEMINI FLASH (ИСКЛЮЧЕН LITE) ---
 
 def request_gemini_analysis(metrics, key):
-    # Получаем список поддерживаемых моделей аккаунта
-    dynamic_models = []
+    # Пул приоритетов строго для полноценных Flash-моделей
+    flash_priorities = [
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-2.5-flash"
+    ]
+    
+    # Динамически получаем доступные модели аккаунта
+    account_models = []
     try:
         list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
         res = requests.get(list_url, timeout=6).json()
         for m in res.get('models', []):
-            if 'generateContent' in m.get('supportedGenerationMethods', []):
-                dynamic_models.append(m['name'].replace('models/', ''))
-    except:
+            m_name = m.get('name', '').replace('models/', '')
+            # Исключаем lite
+            if 'flash' in m_name.lower() and 'lite' not in m_name.lower():
+                account_models.append(m_name)
+    except Exception:
         pass
 
-    # Базовый пул актуальных моделей
-    fallback_pool = [
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-exp",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-pro"
-    ]
-
-    # Объединяем без дубликатов
-    models_to_try = []
-    for model in dynamic_models + fallback_pool:
-        if model not in models_to_try:
-            models_to_try.append(model)
+    # Собираем итоговый список без дубликатов (сначала то, что есть в аккаунте)
+    models_to_try = [m for m in account_models if m not in flash_priorities] + flash_priorities
 
     prompt = f"""
-    Проанализируй эти актуальные метрики популярности:
+    Проанализируй актуальные метрики популярности:
     {json.dumps(metrics, ensure_ascii=False)}
 
     Ты арт-директор. Твоя задача — отобрать ТОП-5 персонажей для создания качественного 3D-арта на СЕГОДНЯШНИЙ день.
@@ -167,7 +182,7 @@ def request_gemini_analysis(metrics, key):
             last_err = str(e)
             continue
 
-    raise RuntimeError(f"Не удалось получить ответ ни от одной модели. Последняя ошибка: {last_err}")
+    raise RuntimeError(f"Не удалось подключиться к Flash-моделям. Ошибка: {last_err}")
 
 # --- ИНТЕРФЕЙС И ЗАПУСК ---
 
@@ -183,13 +198,13 @@ if start_scan:
         st.error("⚠️ Укажите Gemini API Key в левой панели перед запуском.")
     else:
         with log_placeholder.container():
-            st.write("📡 Сбор метрик с арт-баз в параллельных потоках...")
+            st.write("📡 Сбор данных по персонажам (Safebooru / Danbooru)...")
             start_t = time.time()
             with ThreadPoolExecutor(max_workers=20) as executor:
                 raw_metrics = list(executor.map(fetch_art_stats, CHARACTERS))
             fetch_duration = time.time() - start_t
             
-            st.write(f"✅ Данные собраны за {fetch_duration:.2f} сек. Подбор рабочей модели и AI-анализ...")
+            st.write(f"✅ Данные успешно собраны за {fetch_duration:.2f} сек. AI-анализ через Gemini Flash...")
             
             try:
                 ai_start_t = time.time()
@@ -199,7 +214,7 @@ if start_scan:
                 st.session_state['ai_results'] = ai_response
                 st.session_state['metrics_df'] = pd.DataFrame(raw_metrics).sort_values(by="ER (Вовлеченность)", ascending=False)
                 st.session_state['scan_done'] = True
-                st.success(f"Анализ завершен через модель {model_used}! (Сбор: {fetch_duration:.1f}с | ИИ: {ai_duration:.1f}с)")
+                st.success(f"Анализ завершен через {model_used}! (Сбор: {fetch_duration:.1f}с | ИИ: {ai_duration:.1f}с)")
             except Exception as ex:
                 st.error(f"Ошибка при анализе: {ex}")
 
