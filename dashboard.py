@@ -8,6 +8,8 @@ import feedparser
 from concurrent.futures import ThreadPoolExecutor
 import plotly.express as px
 import plotly.graph_objects as go
+import telebot
+import threading
 
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
 st.set_page_config(page_title="Omni-Channel Art Hype Radar Pro", page_icon="🔥", layout="wide")
@@ -20,7 +22,7 @@ st.markdown("""
     .hero-title {font-size: 32px; font-weight: 800; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px; color: #60a5fa;}
     .fact-box {background: rgba(15, 23, 42, 0.7); padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-top: 8px; border-left: 4px solid #38bdf8;}
     .catalyst-box {background: rgba(15, 23, 42, 0.7); padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-top: 8px; border-left: 4px solid #f59e0b;}
-    .badge {background-color: #1e293b; padding: 4px 10px; border-radius: 6px; font-size: 13px; margin-right: 6px; color: #93c5fd; border: 1px solid #334155;}
+    .badge {background-color: #1e293b; padding: 4px 10px; border-radius: 6px; font-size: 13px; margin-right: 6px; color: #93c5fd; border: 1px solid #334155; display: inline-block; margin-bottom: 4px;}
     .spicy-badge {background-color: #3b1c28; color: #ff9ebf; border-color: #ff4b8b;}
     .top1 {border-left-color: #ffd700;} 
     .top2 {border-left-color: #c0c0c0;} 
@@ -34,9 +36,10 @@ youtube_key = st.secrets.get("YOUTUBE_API_KEY", "")
 steam_key = st.secrets.get("STEAM_API_KEY", "")
 twitch_id = st.secrets.get("TWITCH_CLIENT_ID", "")
 twitch_secret = st.secrets.get("TWITCH_CLIENT_SECRET", "")
+tg_bot_token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
 
 st.title("🔥 Omni-Channel Radar: Предиктивный анализ хайпа")
-st.markdown("Мониторинг событий за **последние 72 часа** + прогноз **ближайших инфоповодов** для максимальных охватов фан-арта.")
+st.markdown("Мониторинг реальных событий за **последние 72 часа** без галлюцинаций.")
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 with st.sidebar:
@@ -46,6 +49,7 @@ with st.sidebar:
     st.divider()
     st.header("Статус каналов данных")
     st.write(f"🧠 Gemini Core: {'🟢 Активен' if gemini_key else '🔴 Нет ключа'}")
+    st.write(f"🤖 Telegram Bot: {'🟢 Подключен' if tg_bot_token else '⚪ Выключен'}")
     st.write(f"📺 YouTube API (72h): {'🟢 Активен' if youtube_key else '⚪ Выключен'}")
     st.write(f"🦋 Bluesky Public: 🟢 Активен")
     st.write(f"👾 Reddit Gaming Hubs: 🟢 Активен")
@@ -54,24 +58,18 @@ with st.sidebar:
     st.write(f"🎮 Steam & Twitch: {'🟢 Подключены' if (steam_key or twitch_id) else '🟡 Открытый режим'}")
 
 # ==========================================
-# МОДУЛИ СБОРА СВЕЖИХ ДАННЫХ (ОКНО 72 ЧАСА)
+# ЯДРО СБОРА ДАННЫХ
 # ==========================================
 
 def fetch_rss_news():
-    feeds = [
-        "https://kotaku.com/rss", 
-        "https://www.ign.com/feed.xml", 
-        "https://stopgame.ru/rss/news.xml", 
-        "https://www.gematsu.com/feed",
-        "https://www.siliconera.com/feed/"
-    ]
+    feeds = ["https://kotaku.com/rss", "https://www.ign.com/feed.xml", "https://stopgame.ru/rss/news.xml", "https://www.gematsu.com/feed", "https://www.siliconera.com/feed/"]
     results = []
     headers = {'User-Agent': 'Mozilla/5.0'}
     for url in feeds:
         try:
             res = requests.get(url, headers=headers, timeout=4)
             for entry in feedparser.parse(res.content).entries[:6]:
-                results.append(f"[СМИ/News]: {entry.title}")
+                results.append(f"[СМИ]: {entry.title}")
         except Exception:
             continue
     return results
@@ -82,7 +80,6 @@ def fetch_reddit_trends():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     for sub in subs:
         try:
-            # Забираем горячее и топ за 3 дня
             res = requests.get(f"https://www.reddit.com/r/{sub}/hot.json?limit=6", headers=headers, timeout=4)
             if res.status_code == 200:
                 for p in res.json().get('data', {}).get('children', []):
@@ -92,18 +89,9 @@ def fetch_reddit_trends():
     return results
 
 def fetch_youtube_trailers(api_key):
-    if not api_key: 
-        return []
-    # Окно строго 72 часа назад
+    if not api_key: return []
     time_limit = (datetime.utcnow() - timedelta(days=3)).isoformat() + "Z"
-    params = {
-        "part": "snippet", 
-        "q": "character trailer OR teaser OR gameplay reveal OR banner preview", 
-        "type": "video", 
-        "publishedAfter": time_limit, 
-        "maxResults": 12, 
-        "key": api_key
-    }
+    params = {"part": "snippet", "q": "character trailer OR teaser OR gameplay reveal OR banner preview", "type": "video", "publishedAfter": time_limit, "maxResults": 12, "key": api_key}
     results = []
     try:
         res = requests.get("https://www.googleapis.com/youtube/v3/search", params=params, timeout=5)
@@ -134,8 +122,7 @@ def fetch_booru_hot_tags():
         if res.status_code == 200:
             for post in res.json():
                 tags = post.get('tag_string_character', '')
-                if tags:
-                    results.append(f"[Booru Tag]: {tags} (Score: {post.get('score', 0)})")
+                if tags: results.append(f"[Booru Tag]: {tags}")
     except Exception:
         pass
     return results
@@ -146,7 +133,7 @@ def fetch_steam_twitch(steam_k, c_id, c_secret):
         res_steam = requests.get("https://store.steampowered.com/api/featuredcategories", timeout=5)
         if res_steam.status_code == 200:
             for item in res_steam.json().get('top_sellers', {}).get('items', [])[:6]:
-                results.append(f"[Steam Top Seller]: {item.get('name', '')}")
+                results.append(f"[Steam]: {item.get('name', '')}")
     except Exception:
         pass
     
@@ -157,100 +144,79 @@ def fetch_steam_twitch(steam_k, c_id, c_secret):
                 res_twitch = requests.get("https://api.twitch.tv/helix/games/top?first=6", headers={"Client-ID": c_id, "Authorization": f"Bearer {token}"}, timeout=5)
                 if res_twitch.status_code == 200:
                     for g in res_twitch.json().get('data', []):
-                        results.append(f"[Twitch Top]: {g.get('name')}")
+                        results.append(f"[Twitch]: {g.get('name')}")
         except Exception:
             pass
     return results
 
 # ==========================================
-# ИИ-АНАЛИЗАТОР С ФИЛЬТРОМ ТОКСИЧНОСТИ И ПРОГНОЗОМ
+# СТРОГИЙ ИИ-АНАЛИЗАТОР (БЕЗ ГАЛЛЮЦИНАЦИЙ)
 # ==========================================
 
 def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
-    supported = []
-    try:
-        list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
-        res = requests.get(list_url, timeout=6).json()
-        for m in res.get('models', []):
-            if 'generateContent' in m.get('supportedGenerationMethods', []):
-                name = m.get('name', '').replace('models/', '')
-                if ('flash' in name.lower() or 'pro' in name.lower()) and 'lite' not in name.lower():
-                    supported.append(name)
-    except Exception:
-        pass
-
-    models_to_try = supported + ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     current_date = datetime.now().strftime("%Y-%m-%d")
 
-    spicy_block = ""
-    if nsfw_enabled:
-        spicy_block = """
-        ВНИМАНИЕ: Включен режим 16+. Найди персонажей, вокруг которых хайп вызван фансервисом (новые летние скины, моды, физика, пикантные сюжетные сцены). Заполни массив "spicy_top".
-        """
+    spicy_block = 'Ищи персонажей, популярных за счет фансервиса (купальники, моды, NSFW-adjacent). Заполни массив "spicy_top".' if nsfw_enabled else 'Массив "spicy_top" оставь пустым.'
 
+    # Жесткий промпт с запретом на выдумки
     prompt = f"""
-    Ты ведущий аналитик данных и арт-директор для 3D-художника. Сегодня {current_date}.
-    Художник создает высокодетализированный 3D-арт женских персонажей и публикует его в соцсетях.
+    ТВОЯ ЗАДАЧА — СТРОГИЙ АНАЛИЗ ФАКТОВ. ТЫ НЕ ИМЕЕШЬ ПРАВА ВЫДУМЫВАТЬ ИНФОРМАЦИЮ. Сегодня {current_date}.
     
-    Вот свежие перехваченные события за последние 72 часа из СМИ, Reddit, YouTube, Bluesky, Danbooru, Steam и Twitch:
+    ДАННЫЕ ИЗ ИНТЕРНЕТА (ОСНОВА ДЛЯ АНАЛИЗА):
     {json.dumps(feed_dump, ensure_ascii=False)}
 
     {spicy_block}
 
-    КРИТИЧЕСКИЕ ПРАВИЛА АНАЛИЗА:
-    1. ФИЛЬТР ТОКСИЧНОСТИ: Исключи персонажей, чей хайп вызван только негативом/скандалами без эстетического спроса. Оставляй тех, кем аудитория восхищается (новый крутой дизайн, сюжетный пик, красивый трейлер).
-    2. ВРЕМЕННОЙ СРЕЗ: Оценивай события строго за последние 72 часа И ближайшие инфоповоды на 1-7 дней вперед (анонсированные баннеры, выход трейлеров, патчи).
-    3. КОНКРЕТИКА: В полях обоснования пиши ТОЧНУЮ причину (название патча, скина, ролика, суть мема). Не используй общие фразы.
-
+    ЖЕСТКИЕ ПРАВИЛА:
+    1. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать новости, утечки, трейлеры, коллаборации (например, про Netflix или GTA), если этого НЕТ в тексте "ДАННЫЕ ИЗ ИНТЕРНЕТА".
+    2. Если персонаж популярен, но в "ДАННЫХ" про него нет конкретных новостей, в полях 'past_72h_event' и 'upcoming_catalyst' пиши СТРОГО: "Нет свежих инфоповодов. Спрос держится на фанатской базе."
+    3. Обоснования должны быть реальными. Цитируй или опирайся только на текст из переданных тебе данных.
+    
     СФОРМИРУЙ СТРОГО JSON:
     {{
       "absolute_leader": {{
         "name": "Имя героини",
         "game": "Игра",
         "virality_score": 99,
-        "past_72h_event": "Что конкретно произошло за последние 72 часа (трейлер, анонс, арт, стрим)",
-        "upcoming_catalyst": "Какой инфоповод подогреет интерес в ближайшие дни (старт баннера, патч)",
-        "why_draw_today": "Почему публикация вечером даст взрывной охват",
-        "tags": ["3dart", "fanart", "tag3"]
+        "past_72h_event": "Только реальное событие из данных, иначе 'Нет свежих инфоповодов.'",
+        "upcoming_catalyst": "Только реальный инфоповод из данных, иначе 'Нет свежих инфоповодов.'",
+        "why_draw_today": "Почему публикация сегодня вечером даст охват",
+        "tags": ["3dart", "fanart"]
       }},
       "spicy_top": [
-        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Точная причина фансервисного хайпа", "score": 95, "tags": ["spicy", "tag2"] }}
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Реальная причина фансервисного хайпа", "score": 95, "tags": ["spicy"] }}
       ],
       "world_top": [
-        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Конкретный триггер мирового спроса", "score": 95, "tags": ["tag1"] }}
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Реальный триггер спроса", "score": 95, "tags": ["tag1"] }}
       ],
       "ru_top": [
-        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Конкретный триггер спроса в СНГ/РФ фандоме", "score": 92, "tags": ["tag1"] }}
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Реальный триггер спроса", "score": 92, "tags": ["tag1"] }}
       ],
       "gacha_top_50": [
-        {{ "rank": 1, "name": "Имя", "game": "Игра", "score": 99, "reach": 95, "likes": 98, "reason": "Патч/баннер/инфоповод", "trend": "🔥" }}
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "score": 99, "reach": 95, "likes": 98, "reason": "Реальная причина или 'Базовый интерес'", "trend": "🔥" }}
       ],
       "classic_top_50": [
-        {{ "rank": 1, "name": "Имя", "game": "Игра", "score": 99, "reach": 90, "likes": 92, "reason": "DLC/скин/лояльность фандома", "trend": "📈" }}
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "score": 99, "reach": 90, "likes": 92, "reason": "Реальная причина или 'Базовый интерес'", "trend": "📈" }}
       ]
     }}
-    Массивы gacha_top_50 и classic_top_50 должны содержать ровно по 50 записей.
     """
 
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.15}
+        # Температура 0.0 для максимальной фактической точности и отсутствия галлюцинаций
+        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.0}
     }
 
     last_err = ""
     for model_name in models_to_try:
         try:
-            resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}",
-                headers=headers, json=payload, timeout=55
-            )
+            resp = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}", headers=headers, json=payload, timeout=55)
             if resp.status_code == 200:
                 raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
-                if raw_text.startswith("```json"): raw_text = raw_text[7:]
-                if raw_text.startswith("```"): raw_text = raw_text[3:]
-                if raw_text.endswith("```"): raw_text = raw_text[:-3]
-                return json.loads(raw_text.strip()), model_name
+                raw_text = raw_text.replace("```json\n", "").replace("```", "").strip()
+                return json.loads(raw_text), model_name
             else:
                 last_err = f"[{model_name}] {resp.status_code}: {resp.text}"
         except Exception as e:
@@ -259,42 +225,77 @@ def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
 
     raise RuntimeError(f"Сбой Gemini API: {last_err}")
 
+def run_full_scan():
+    collected_feed = []
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        for future in [
+            executor.submit(fetch_rss_news), executor.submit(fetch_reddit_trends), 
+            executor.submit(fetch_youtube_trailers, youtube_key), executor.submit(fetch_bluesky_trends), 
+            executor.submit(fetch_booru_hot_tags), executor.submit(fetch_steam_twitch, steam_key, twitch_id, twitch_secret)
+        ]:
+            collected_feed.extend(future.result())
+    return analyze_cross_platform_feed(collected_feed, gemini_key, is_16_plus), collected_feed
+
 # ==========================================
-# ИНТЕРФЕЙС И ЗАПУСК
+# ИНТЕГРАЦИЯ TELEGRAM БОТА (В ФОНЕ)
 # ==========================================
 
-if st.button("🚀 Запустить утренний аналитический скан (72h + Forecast)", type="primary", use_container_width=True):
+@st.cache_resource
+def start_telegram_bot(token):
+    if not token: return None
+    bot = telebot.TeleBot(token)
+
+    @bot.message_handler(commands=['start', 'help'])
+    def send_welcome(message):
+        bot.reply_to(message, "Привет! Я *Omni-Channel Radar* 🤖\nНапиши /scan, чтобы я собрал строгие факты по трендам.", parse_mode="Markdown")
+
+    @bot.message_handler(commands=['scan'])
+    def handle_scan(message):
+        bot.reply_to(message, "📡 Собираю данные с платформ. ИИ проверяет факты... Подожди 20-30 секунд.")
+        try:
+            (ai_res, model), _ = run_full_scan()
+            
+            leader = ai_res.get('absolute_leader', {})
+            msg = f"👑 *АБСОЛЮТНЫЙ ЛИДЕР:*\n*{leader.get('name', 'N/A')}* ({leader.get('game', 'N/A')})\n"
+            msg += f"📌 Событие (72ч): {leader.get('past_72h_event', 'Нет данных')}\n\n"
+            
+            msg += "🌍 *МИРОВОЙ ТОП-3:*\n"
+            for i, itm in enumerate(ai_res.get('world_top', [])[:3]):
+                msg += f"{i+1}. {itm['name']} ({itm.get('score')}/100) - {itm.get('analysis')[:40]}...\n"
+                
+            bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Ошибка сбора: {str(e)}")
+
+    threading.Thread(target=bot.infinity_polling, daemon=True).start()
+    return bot
+
+start_telegram_bot(tg_bot_token)
+
+# ==========================================
+# ИНТЕРФЕЙС STREAMLIT
+# ==========================================
+
+if st.button("🚀 Запустить строгий аналитический скан", type="primary", use_container_width=True):
     if not gemini_key:
         st.error("⚠️ Укажите GEMINI_API_KEY в Secrets.")
     else:
         progress = st.progress(0)
         status = st.empty()
-        start_time = time.time()
-        
-        status.markdown("📡 **Сбор инфополя:** Опрашиваем Reddit, СМИ, YouTube (72h), Bluesky, Booru, Steam и Twitch...")
-        collected_feed = []
-        with ThreadPoolExecutor(max_workers=7) as executor:
-            for future in [
-                executor.submit(fetch_rss_news), executor.submit(fetch_reddit_trends), 
-                executor.submit(fetch_youtube_trailers, youtube_key), executor.submit(fetch_bluesky_trends), 
-                executor.submit(fetch_booru_hot_tags), executor.submit(fetch_steam_twitch, steam_key, twitch_id, twitch_secret)
-            ]:
-                collected_feed.extend(future.result())
-                
-        progress.progress(45)
-        status.markdown(f"🧠 **ИИ-фильтрация:** Обработано **{len(collected_feed)}** событий. Отсекаем негатив, ищем катализаторы хайпа...")
+        status.markdown("📡 **Сбор инфополя и проверка фактов...**")
+        progress.progress(50)
         
         try:
-            ai_results, used_model = analyze_cross_platform_feed(collected_feed, gemini_key, is_16_plus)
+            (ai_results, used_model), raw_feed = run_full_scan()
             st.session_state.update({
                 'omni_results': ai_results, 
-                'raw_feed': collected_feed, 
+                'raw_feed': raw_feed,
                 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
                 'scan_done': True
             })
             progress.empty()
             status.empty()
-            st.toast(f"Аналитика готова ({used_model})!", icon="✅")
+            st.toast(f"Аналитика готова без галлюцинаций ({used_model})!", icon="✅")
         except Exception as e:
             st.error(f"Ошибка анализа: {e}")
 
@@ -306,27 +307,21 @@ if st.session_state.get('scan_done', False):
     res = st.session_state['omni_results']
     st.caption(f"⏱️ **Данные собраны и верифицированы:** {st.session_state['timestamp']}")
     
-    # 1. КАРТОЧКА АБСОЛЮТНОГО ЛИДЕРА
+    # 1. КАРТОЧКА АБСОЛЮТНОГО ЛИДЕРА (HTML БЕЗ ОТСТУПОВ)
     leader = res.get('absolute_leader', {})
     if leader:
         tags_html = " ".join([f"<span class='badge'>#{t}</span>" for t in leader.get('tags', [])])
+        # Обрати внимание: теги HTML прижаты к левому краю, чтобы Streamlit не превращал их в код
         st.markdown(f"""
-        <div class="hero-card">
-            <div style="text-transform: uppercase; letter-spacing: 2px; font-size: 12px; margin-bottom: 6px; color: #fbbf24;">👑 Главная цель для вечернего рендера</div>
-            <div class="hero-title">{leader.get('name')} <span style="font-size:22px; font-weight:400; opacity:0.85; color:#cbd5e1;">— {leader.get('game')}</span></div>
-            <div style="font-size: 16px; margin: 4px 0 12px 0;">Индекс виральности: <b>{leader.get('virality_score')}/100</b></div>
-            
-            <div class="fact-box">
-                📌 <b>Событие за последние 72ч:</b> {leader.get('past_72h_event')}
-            </div>
-            <div class="catalyst-box">
-                ⏳ <b>Ближайший катализатор (1-7 дней):</b> {leader.get('upcoming_catalyst')}
-            </div>
-            <div style="margin-top: 10px; font-size: 14px; color: #94a3b8;">
-                💡 <b>Почему рисовать сегодня:</b> {leader.get('why_draw_today')}
-            </div>
-            <div style="margin-top: 15px;">{tags_html}</div>
-        </div>
+<div class="hero-card">
+<div style="text-transform: uppercase; letter-spacing: 2px; font-size: 12px; margin-bottom: 6px; color: #fbbf24;">👑 Главная цель для вечернего рендера</div>
+<div class="hero-title">{leader.get('name', 'Нет данных')} <span style="font-size:22px; font-weight:400; opacity:0.85; color:#cbd5e1;">— {leader.get('game', 'Нет данных')}</span></div>
+<div style="font-size: 16px; margin: 4px 0 12px 0;">Индекс виральности: <b>{leader.get('virality_score', 0)}/100</b></div>
+<div class="fact-box">📌 <b>Событие за последние 72ч:</b> {leader.get('past_72h_event', 'Нет свежих инфоповодов')}</div>
+<div class="catalyst-box">⏳ <b>Ближайший катализатор:</b> {leader.get('upcoming_catalyst', 'Нет свежих инфоповодов')}</div>
+<div style="margin-top: 10px; font-size: 14px; color: #94a3b8;">💡 <b>Почему рисовать сегодня:</b> {leader.get('why_draw_today', 'Базовый спрос аудитории')}</div>
+<div style="margin-top: 15px;">{tags_html}</div>
+</div>
         """, unsafe_allow_html=True)
 
     # 2. МИКРО-ТОПЫ И БЛОК 16+
@@ -338,11 +333,11 @@ if st.session_state.get('scan_done', False):
         for idx, item in enumerate(res.get('spicy_top', [])[:3]):
             with spicy_cols[idx]:
                 st.markdown(f"""
-                <div class="spicy-card">
-                    <h4 style="margin-bottom: 5px; color: #ff9ebf;">{medals[idx]} {item['name']} <span style="font-size:14px; color:#a5b1c2;">({item['game']})</span></h4>
-                    <p style="font-size: 13px; color: #f1f5f9; margin-bottom: 8px;">{item['analysis']}</p>
-                    <div>{" ".join([f"<span class='badge spicy-badge'>#{t}</span>" for t in item.get('tags', [])])}</div>
-                </div>
+<div class="spicy-card">
+<h4 style="margin-bottom: 5px; color: #ff9ebf;">{medals[idx]} {item.get('name', '')} <span style="font-size:14px; color:#a5b1c2;">({item.get('game', '')})</span></h4>
+<p style="font-size: 13px; color: #f1f5f9; margin-bottom: 8px;">{item.get('analysis', '')}</p>
+<div>{" ".join([f"<span class='badge spicy-badge'>#{t}</span>" for t in item.get('tags', [])])}</div>
+</div>
                 """, unsafe_allow_html=True)
         st.divider()
 
@@ -351,20 +346,20 @@ if st.session_state.get('scan_done', False):
         st.subheader("🌍 Мировой спрос (Топ-5)")
         for idx, item in enumerate(res.get('world_top', [])[:5]):
             st.markdown(f"""
-            <div class="metric-card {classes[idx]}">
-                <h4 style="margin-bottom: 5px;">{medals[idx]} {item['name']} <span style="font-size:14px; color:#888;">({item['game']})</span> — {item.get('score', 0)}/100</h4>
-                <p style="font-size: 14px; color: #cbd5e1;">{item['analysis']}</p>
-            </div>
+<div class="metric-card {classes[idx]}">
+<h4 style="margin-bottom: 5px;">{medals[idx]} {item.get('name', '')} <span style="font-size:14px; color:#888;">({item.get('game', '')})</span> — {item.get('score', 0)}/100</h4>
+<p style="font-size: 14px; color: #cbd5e1;">{item.get('analysis', '')}</p>
+</div>
             """, unsafe_allow_html=True)
 
     with col_r:
         st.subheader("🇷🇺 СНГ / РФ фокус (Топ-5)")
         for idx, item in enumerate(res.get('ru_top', [])[:5]):
             st.markdown(f"""
-            <div class="metric-card {classes[idx]}">
-                <h4 style="margin-bottom: 5px;">{medals[idx]} {item['name']} <span style="font-size:14px; color:#888;">({item['game']})</span> — {item.get('score', 0)}/100</h4>
-                <p style="font-size: 14px; color: #cbd5e1;">{item['analysis']}</p>
-            </div>
+<div class="metric-card {classes[idx]}">
+<h4 style="margin-bottom: 5px;">{medals[idx]} {item.get('name', '')} <span style="font-size:14px; color:#888;">({item.get('game', '')})</span> — {item.get('score', 0)}/100</h4>
+<p style="font-size: 14px; color: #cbd5e1;">{item.get('analysis', '')}</p>
+</div>
             """, unsafe_allow_html=True)
 
     st.divider()
@@ -378,7 +373,7 @@ if st.session_state.get('scan_done', False):
     col_chart1, col_chart2 = st.columns(2)
     
     with col_chart1:
-        if not df_gacha.empty:
+        if not df_gacha.empty and 'reach' in df_gacha.columns and 'likes' in df_gacha.columns:
             fig_g = px.scatter(
                 df_gacha.head(15), x="reach", y="likes", size="score", color="game", 
                 hover_name="name", text="name", size_max=38, template="plotly_dark",
@@ -389,10 +384,11 @@ if st.session_state.get('scan_done', False):
             st.plotly_chart(fig_g, use_container_width=True)
 
     with col_chart2:
-        if not df_classic.empty:
+        if not df_classic.empty and 'score' in df_classic.columns and 'name' in df_classic.columns:
             fig_c = px.bar(
                 df_classic.head(15).sort_values('score', ascending=True), 
-                x='score', y='name', color='likes', orientation='h', text_auto=True,
+                x='score', y='name', color='likes' if 'likes' in df_classic.columns else None, 
+                orientation='h', text_auto=True,
                 color_continuous_scale='Inferno', title="AAA и Соревновательные: Виральность", 
                 template="plotly_dark", labels={"score": "Индекс хайпа", "name": ""}
             )
@@ -408,7 +404,7 @@ if st.session_state.get('scan_done', False):
         "game": "Игра",
         "trend": "Тренд",
         "score": st.column_config.ProgressColumn("Хайп", min_value=0, max_value=100),
-        "reason": "Конкретная причина спроса (патч/скин/инфоповод)",
+        "reason": "Фактическая причина спроса",
         "reach": st.column_config.NumberColumn("Охват", format="%d"),
         "likes": st.column_config.NumberColumn("Лайки", format="%d")
     }
