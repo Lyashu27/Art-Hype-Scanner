@@ -150,16 +150,32 @@ def fetch_steam_twitch(steam_k, c_id, c_secret):
     return results
 
 # ==========================================
-# СТРОГИЙ ИИ-АНАЛИЗАТОР (БЕЗ ГАЛЛЮЦИНАЦИЙ)
+# ИИ-АНАЛИЗАТОР С ДИНАМИЧЕСКИМ ПОИСКОМ МОДЕЛЕЙ
 # ==========================================
 
 def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
-    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
-    current_date = datetime.now().strftime("%Y-%m-%d")
+    # Автоматически запрашиваем список доступных моделей для вашего аккаунта
+    supported_models = []
+    try:
+        list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        res = requests.get(list_url, timeout=8).json()
+        for m in res.get('models', []):
+            if 'generateContent' in m.get('supportedGenerationMethods', []):
+                name = m.get('name', '').replace('models/', '')
+                if ('flash' in name.lower() or 'pro' in name.lower()) and 'lite' not in name.lower():
+                    supported_models.append(name)
+    except Exception:
+        pass
 
+    fallback_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-pro"]
+    models_to_try = []
+    for m in supported_models + fallback_models:
+        if m not in models_to_try:
+            models_to_try.append(m)
+
+    current_date = datetime.now().strftime("%Y-%m-%d")
     spicy_block = 'Ищи персонажей, популярных за счет фансервиса (купальники, моды, NSFW-adjacent). Заполни массив "spicy_top".' if nsfw_enabled else 'Массив "spicy_top" оставь пустым.'
 
-    # Жесткий промпт с запретом на выдумки
     prompt = f"""
     ТВОЯ ЗАДАЧА — СТРОГИЙ АНАЛИЗ ФАКТОВ. ТЫ НЕ ИМЕЕШЬ ПРАВА ВЫДУМЫВАТЬ ИНФОРМАЦИЮ. Сегодня {current_date}.
     
@@ -169,8 +185,8 @@ def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
     {spicy_block}
 
     ЖЕСТКИЕ ПРАВИЛА:
-    1. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать новости, утечки, трейлеры, коллаборации (например, про Netflix или GTA), если этого НЕТ в тексте "ДАННЫЕ ИЗ ИНТЕРНЕТА".
-    2. Если персонаж популярен, но в "ДАННЫХ" про него нет конкретных новостей, в полях 'past_72h_event' и 'upcoming_catalyst' пиши СТРОГО: "Нет свежих инфоповодов. Спрос держится на фанатской базе."
+    1. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать новости, утечки, трейлеры, коллаборации, если этого НЕТ в переданных данных.
+    2. Если персонаж популярен, но в данных про него нет конкретных новостей за 72ч, в полях 'past_72h_event' и 'upcoming_catalyst' пиши СТРОГО: "Нет свежих инфоповодов. Спрос держится на фанатской базе."
     3. Обоснования должны быть реальными. Цитируй или опирайся только на текст из переданных тебе данных.
     
     СФОРМИРУЙ СТРОГО JSON:
@@ -205,7 +221,6 @@ def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        # Температура 0.0 для максимальной фактической точности и отсутствия галлюцинаций
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.0}
     }
 
@@ -237,7 +252,7 @@ def run_full_scan():
     return analyze_cross_platform_feed(collected_feed, gemini_key, is_16_plus), collected_feed
 
 # ==========================================
-# ИНТЕГРАЦИЯ TELEGRAM БОТА (В ФОНЕ)
+# ИНТЕГРАЦИЯ TELEGRAM БОТА
 # ==========================================
 
 @st.cache_resource
@@ -254,15 +269,12 @@ def start_telegram_bot(token):
         bot.reply_to(message, "📡 Собираю данные с платформ. ИИ проверяет факты... Подожди 20-30 секунд.")
         try:
             (ai_res, model), _ = run_full_scan()
-            
             leader = ai_res.get('absolute_leader', {})
             msg = f"👑 *АБСОЛЮТНЫЙ ЛИДЕР:*\n*{leader.get('name', 'N/A')}* ({leader.get('game', 'N/A')})\n"
             msg += f"📌 Событие (72ч): {leader.get('past_72h_event', 'Нет данных')}\n\n"
-            
             msg += "🌍 *МИРОВОЙ ТОП-3:*\n"
             for i, itm in enumerate(ai_res.get('world_top', [])[:3]):
-                msg += f"{i+1}. {itm['name']} ({itm.get('score')}/100) - {itm.get('analysis')[:40]}...\n"
-                
+                msg += f"{i+1}. {itm['name']} ({itm.get('score')}/100)\n"
             bot.send_message(message.chat.id, msg, parse_mode="Markdown")
         except Exception as e:
             bot.send_message(message.chat.id, f"❌ Ошибка сбора: {str(e)}")
@@ -295,7 +307,7 @@ if st.button("🚀 Запустить строгий аналитический 
             })
             progress.empty()
             status.empty()
-            st.toast(f"Аналитика готова без галлюцинаций ({used_model})!", icon="✅")
+            st.toast(f"Аналитика готова ({used_model})!", icon="✅")
         except Exception as e:
             st.error(f"Ошибка анализа: {e}")
 
@@ -307,11 +319,10 @@ if st.session_state.get('scan_done', False):
     res = st.session_state['omni_results']
     st.caption(f"⏱️ **Данные собраны и верифицированы:** {st.session_state['timestamp']}")
     
-    # 1. КАРТОЧКА АБСОЛЮТНОГО ЛИДЕРА (HTML БЕЗ ОТСТУПОВ)
+    # 1. КАРТОЧКА АБСОЛЮТНОГО ЛИДЕРА
     leader = res.get('absolute_leader', {})
     if leader:
         tags_html = " ".join([f"<span class='badge'>#{t}</span>" for t in leader.get('tags', [])])
-        # Обрати внимание: теги HTML прижаты к левому краю, чтобы Streamlit не превращал их в код
         st.markdown(f"""
 <div class="hero-card">
 <div style="text-transform: uppercase; letter-spacing: 2px; font-size: 12px; margin-bottom: 6px; color: #fbbf24;">👑 Главная цель для вечернего рендера</div>
