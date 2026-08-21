@@ -41,7 +41,7 @@ twitch_secret = st.secrets.get("TWITCH_CLIENT_SECRET", "")
 tg_bot_token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
 
 st.title("🔥 Omni-Channel Radar v2: High-Velocity Art Hype Engine")
-st.markdown("Мониторинг первоисточников (Leaks, Booru 72h, Bluesky, Steam/Twitch) с фильтрацией шума.")
+st.markdown("Мониторинг первоисточников (Reddit Leaks, Danbooru 72h, Bluesky, Steam/Twitch) с динамическим анализом.")
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 with st.sidebar:
@@ -49,7 +49,7 @@ with st.sidebar:
     is_16_plus = st.toggle("🔞 Режим 16+ (Spicy / Фансервис / Моды)", value=True, help="Фокус на купальниках, откровенных скинах, модах и фансервисных триггерах.")
     st.divider()
     st.header("📡 Состояние Каналов")
-    st.write(f"🧠 Gemini Engine: {'🟢 Активен' if gemini_key else '🔴 Нет ключа'}")
+    st.write(f"🧠 Gemini Core: {'🟢 Активен' if gemini_key else '🔴 Нет ключа'}")
     st.write(f"🤖 Telegram Bot: {'🟢 Подключен' if tg_bot_token else '⚪ Выключен'}")
     st.write(f"🎨 Danbooru 72h: 🟢 Активен (age:<3d)")
     st.write(f"🔍 Reddit Leaks Hubs: 🟢 Активен (Top 7d)")
@@ -58,11 +58,11 @@ with st.sidebar:
     st.write(f"🎮 Steam & Twitch: {'🟢 Подключены' if (steam_key or twitch_id) else '🟡 Базовый режим'}")
 
 # ==========================================
-# УЛУЧШЕННОЕ ЯДРО СБОРА ДАННЫХ
+# ЯДРО СБОРА ДАННЫХ ИЗ ПЕРВОИСТОЧНИКОВ
 # ==========================================
 
 def fetch_danbooru_hot_72h():
-    """Сбор взрывных персонажей по тегам за последние 72 часа (а не за всё время)"""
+    """Сбор взрывных персонажей по тегам за последние 72 часа"""
     url = "https://danbooru.donmai.us/posts.json?limit=40&tags=age:<3d+order:score"
     results = []
     char_counts = Counter()
@@ -110,7 +110,7 @@ def fetch_reddit_leaks_and_hubs():
     return results
 
 def fetch_bluesky_art():
-    """Поиск артов и виральных персонажей в децентрализованной сети Bluesky"""
+    """Поиск виральных персонажей в децентрализованной ленте Bluesky"""
     queries = ["fanart", "character design reveal", "drip marketing", "new skin"]
     results = []
     for q in queries[:2]:
@@ -188,49 +188,74 @@ def fetch_steam_twitch(steam_k, c_id, c_secret):
     return results
 
 # ==========================================
-# ИИ-АНАЛИЗАТОР (ФОКУС НА КАЧЕСТВО И ТОЧНОСТЬ)
+# ИИ-АНАЛИЗАТОР С АВТООПРЕДЕЛЕНИЕМ МОДЕЛЕЙ
 # ==========================================
 
+def get_available_gemini_models(api_key):
+    """Динамический поиск активных моделей для конкретного API-ключа"""
+    models = []
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+        res = requests.get(url, timeout=8)
+        if res.status_code == 200:
+            for m in res.json().get('models', []):
+                if 'generateContent' in m.get('supportedGenerationMethods', []):
+                    name = m.get('name', '').replace('models/', '')
+                    # Приоритет быстрым Flash-моделям
+                    if 'flash' in name.lower():
+                        models.insert(0, name)
+                    elif 'pro' in name.lower():
+                        models.append(name)
+    except Exception:
+        pass
+
+    # Надежные дефолтные имена актуальных версий
+    fallback = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro", "gemini-2.0-flash-exp", "gemini-2.5-flash"]
+    for f in fallback:
+        if f not in models:
+            models.append(f)
+    return models
+
 def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
-    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-pro"]
+    models_to_try = get_available_gemini_models(key)
     current_date = datetime.now().strftime("%Y-%m-%d")
-    spicy_instruction = 'Заполни массив "spicy_top" (персонажи с виральными купальниками, модами, откровенными образами из данных).' if nsfw_enabled else 'Оставь "spicy_top" пустым.'
+    spicy_instruction = 'Заполни массив "spicy_top" персонажами с фансервисом, купальниками, модами.' if nsfw_enabled else 'Оставь "spicy_top" пустым.'
 
     prompt = f"""
-    ТЫ — ВЕДУЩИЙ АРТ-ДИРЕКТОР И АНАЛИТИК ХАЙПА ФАН-АРТА ДЛЯ 3D/2D ХУДОЖНИКОВ. Сегодня {current_date}.
+    ТЫ — АНАЛИТИК ХАЙПА ФАН-АРТА ДЛЯ ХУДОЖНИКОВ. Сегодня {current_date}.
     
     ВХОДНЫЕ ДАННЫЕ С ПЕРВОИСТОЧНИКОВ (Danbooru 72h, Reddit Leaks, Bluesky, YouTube, Steam/Twitch):
     {json.dumps(feed_dump, ensure_ascii=False)}
 
     ЗАДАЧА:
-    Проанализируй входящий поток и выдели персонажей с НАИБОЛЬШИМ ИМПУЛЬСОМ СПРОСА ПРЯМО СЕЙЧАС.
+    Выдели персонажей с НАИБОЛЬШИМ ИМПУЛЬСОМ СПРОСА прямо сейчас на основе переданных фактов.
     {spicy_instruction}
 
     ПРАВИЛА:
-    1. Не галлюцинируй несуществующими событиями: связывай персонажа строго с реальным триггером из ленты (утечка внешности, анонс баннера, трейлер, бум на Danbooru/Reddit, новый скин).
-    2. В поле "visual_hook" укажи конкретную визуальную фишку для рендера (например: "новый купальник", "неоновое свечение меча", "откровенный скин из мода", "акцент на силуэте").
-    3. Значения score, reach, likes выставляй реалистично на основе популярности первоисточника (0-100).
+    1. Не придумывай несуществующие события. Связывай персонажа строго с реальным триггером из ленты.
+    2. В поле "visual_hook" укажи визуальную деталь для рендера (поза, купальник, оружие, подсветка, скин).
+    3. Выстави реалистичный скоринг (0-100).
     
     ВЕРНИ СТРОГО JSON:
     {{
       "absolute_leader": {{
-        "name": "Имя героини/персонажа",
+        "name": "Имя персонажа",
         "game": "Игра/Франшиза",
         "virality_score": 98,
-        "past_72h_event": "Конкретный факт из данных (утечка сплэш-арта, трейлер, баннер)",
+        "past_72h_event": "Факт из данных",
         "upcoming_catalyst": "Что подогреет интерес в ближайшие дни",
-        "visual_hook": "На какую деталь внешности/позу делать упор в 3D/2D",
-        "why_draw_today": "Почему публикация сегодня даст максимальный охват",
-        "tags": ["3dart", "character", "fanart"]
+        "visual_hook": "На какую деталь образа делать упор в арте",
+        "why_draw_today": "Почему публикация сегодня даст охват",
+        "tags": ["3dart", "fanart"]
       }},
       "spicy_top": [
-        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Причина фансервис-хайпа", "visual_hook": "Ключевой элемент костюма/ракурс", "score": 95, "tags": ["spicy", "summer"] }}
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Причина фансервис-хайпа", "visual_hook": "Ключевой элемент костюма", "score": 95, "tags": ["spicy"] }}
       ],
       "world_top": [
         {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Основной глобальный триггер", "score": 96, "tags": ["global"] }}
       ],
       "ru_top": [
-        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Почему популярен в RU/CIS сегменте", "score": 93, "tags": ["ru_trend"] }}
+        {{ "rank": 1, "name": "Имя", "game": "Игра", "analysis": "Триггер для RU/CIS аудитории", "score": 93, "tags": ["ru_trend"] }}
       ],
       "gacha_top": [
         {{ "rank": 1, "name": "Имя", "game": "Игра", "score": 97, "reach": 94, "likes": 96, "visual_hook": "Деталь образа", "reason": "Реальный инфоповод", "trend": "🔥" }}
@@ -244,29 +269,33 @@ def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1}
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "temperature": 0.1
+        }
     }
 
     last_err = ""
     for model_name in models_to_try:
         try:
-            resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}",
-                headers=headers,
-                json=payload,
-                timeout=50
-            )
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
+            resp = requests.post(url, headers=headers, json=payload, timeout=45)
+            
             if resp.status_code == 200:
                 raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
-                raw_text = raw_text.replace("```json\n", "").replace("```", "").strip()
-                return json.loads(raw_text), model_name
+                # Извлечение чистого JSON блока
+                json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+                if json_match:
+                    return json.loads(json_match.group()), model_name
+                else:
+                    return json.loads(raw_text), model_name
             else:
                 last_err = f"[{model_name}] {resp.status_code}: {resp.text}"
         except Exception as e:
             last_err = f"[{model_name}] {str(e)}"
             continue
 
-    raise RuntimeError(f"Сбой подключения к Gemini API: {last_err}")
+    raise RuntimeError(f"Сбой подключения к Gemini API. Последняя ошибка: {last_err}")
 
 def run_full_scan():
     collected_feed = []
@@ -326,24 +355,26 @@ if st.button("🚀 Запустить глубокий скан первоист
     if not gemini_key:
         st.error("⚠️ Добавьте GEMINI_API_KEY в Secrets приложения.")
     else:
-        with st.status("📡 Сбор сигналов из первоисточников и валидация...", expanded=True) as status_box:
-            st.write("1. Проверяем Danbooru на взрывные теги за 72ч...")
-            st.write("2. Парсим топ-посты в Reddit Leaks хабах...")
-            st.write("3. Сканируем Bluesky и YouTube трейлеры...")
-            st.write("4. ИИ синтезирует скоринг и формирует визуальные хуки...")
-            try:
-                (ai_results, used_model), raw_feed = run_full_scan()
-                st.session_state.update({
-                    'omni_results': ai_results,
-                    'raw_feed': raw_feed,
-                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'scan_done': True
-                })
-                status_box.update(label=f"Готово! Обработано моделью {used_model}", state="complete", expanded=False)
-                st.toast("Анализ трендов успешно завершен!", icon="✨")
-            except Exception as e:
-                status_box.update(label="Ошибка сбора данных", state="error")
-                st.error(f"Ошибка: {e}")
+        status_container = st.status("📡 Сбор сигналов и синтез аналитики...", expanded=True)
+        try:
+            status_container.write("1. Проверяем Danbooru на взрывные теги за 72ч...")
+            status_container.write("2. Парсим топ-посты в Reddit Leaks хабах...")
+            status_container.write("3. Сканируем Bluesky, YouTube, Steam/Twitch...")
+            status_container.write("4. Подключаем доступную модель Gemini и строим бэклог...")
+            
+            (ai_results, used_model), raw_feed = run_full_scan()
+            
+            st.session_state.update({
+                'omni_results': ai_results,
+                'raw_feed': raw_feed,
+                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'scan_done': True
+            })
+            status_container.update(label=f"Готово! Модель: {used_model}", state="complete", expanded=False)
+            st.toast("Анализ трендов успешно завершен!", icon="✨")
+        except Exception as e:
+            status_container.update(label="Ошибка сбора данных", state="error", expanded=True)
+            st.error(f"Детали ошибки: {e}")
 
 # ==========================================
 # ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ
