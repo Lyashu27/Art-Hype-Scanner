@@ -43,7 +43,7 @@ tg_bot_token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
 nexus_key = st.secrets.get("NEXUSMODS_API_KEY", "")
 
 st.title("🔥 Omni-Channel Art Hype Radar: Ultra-Precision Edition")
-st.markdown("Предиктивный радар виральности женских персонажей на Pro-моделях Gemini.")
+st.markdown("Предиктивный радар виральности женских персонажей. Строгий режим: **ТОЛЬКО PRO МОДЕЛИ**.")
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 with st.sidebar:
@@ -82,16 +82,23 @@ def get_dynamic_trending_games():
 # ==========================================
 def fetch_danbooru_velocity(depth):
     limit = 100 * depth
-    url = f"https://danbooru.donmai.us/posts.json?limit={limit}&tags=age:<24h+1girl+-comic+-cartoon"
+    # ИСПРАВЛЕНО: Только 2 тега, чтобы избежать ошибки 422
+    url = f"https://danbooru.donmai.us/posts.json?limit={limit}&tags=1girl+age:<24h"
     results = []
     char_counts = Counter()
     try:
-        res = requests.get(url, headers={'User-Agent': 'HypeRadarPro/6.0'}, timeout=15)
+        res = requests.get(url, headers={'User-Agent': 'HypeRadarPro/7.0'}, timeout=15)
         if res.status_code == 200:
             for post in res.json():
+                tags = post.get('tag_string', '')
                 chars = post.get('tag_string_character', '').split()
                 copyr = post.get('tag_string_copyright', '').split()
                 score = post.get('score', 0)
+                
+                # Локальный фильтр мультфильмов и комиксов
+                if 'comic' in tags or 'cartoon' in tags:
+                    continue
+                    
                 weight = 1 + (score * 0.1) if score > 10 else 1
                 
                 for char in chars:
@@ -103,7 +110,7 @@ def fetch_danbooru_velocity(depth):
             for tag, score in char_counts.most_common(20):
                 if score >= 3:
                     clean_name = tag.replace('_', ' ').title()
-                    results.append(f"[Danbooru High Velocity]: {clean_name} (Индекс спроса: {math.floor(score)})")
+                    results.append(f"[Danbooru High Velocity]: {clean_name} (Индекс: {math.floor(score)})")
         else:
             results.append(f"[Danbooru Error]: Status {res.status_code}")
     except Exception as e:
@@ -116,7 +123,8 @@ def fetch_reddit_rss_fallback(depth):
         "WutheringWavesLeaks", "NikkeMobile", "BlueArchive", "Snowbreak", "gaming"
     ]
     results = []
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) HypeRadar/6.0'}
+    # ИСПРАВЛЕНО: Браузерный User-Agent для обхода 429
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     
     for sub in subs:
         try:
@@ -124,7 +132,7 @@ def fetch_reddit_rss_fallback(depth):
             res = requests.get(url, headers=headers, timeout=10)
             if res.status_code == 200:
                 feed = feedparser.parse(res.content)
-                for entry in feed.entries[:5 + (depth*3)]:
+                for entry in feed.entries[:5 + (depth*2)]:
                     title = entry.title
                     if any(kw in title.lower() for kw in ['leak', 'drip', 'model', 'render', 'banner', 'skin', 'art']):
                         results.append(f"[Reddit r/{sub} RSS]: {title}")
@@ -132,7 +140,8 @@ def fetch_reddit_rss_fallback(depth):
                 results.append(f"[Reddit Error r/{sub}]: Status {res.status_code}")
         except Exception as e:
             results.append(f"[Reddit Exception r/{sub}]: {str(e)}")
-        time.sleep(0.5) 
+        # ИСПРАВЛЕНО: Увеличена пауза, чтобы избежать бана
+        time.sleep(2.0) 
     return results
 
 def fetch_bilibili_hot():
@@ -161,7 +170,7 @@ def fetch_nexusmods_trending(api_key):
         return ["[NexusMods]: API ключ не указан"]
     games = ["cyberpunk2077", "residentevil42023", "baldursgate3", "monsterhunterworld", "streetfighter6", "skyrimspecialedition"]
     results = []
-    headers = {"accept": "application/json", "apikey": api_key, "User-Agent": "HypeRadar/6.0"}
+    headers = {"accept": "application/json", "apikey": api_key, "User-Agent": "HypeRadar/7.0"}
     
     for game in games:
         try:
@@ -228,60 +237,58 @@ def fetch_bluesky_art(depth):
     return results
 
 # ==========================================
-# ИИ-АНАЛИЗАТОР (ФИЛЬТРАЦИЯ ТОЛЬКО GEMINI)
+# ИИ-АНАЛИЗАТОР (СТРОГИЙ PRO РЕЖИМ)
 # ==========================================
-def get_clean_gemini_models(api_key):
+def get_strict_pro_models(api_key):
     """
-    Формирует список только валидных генеративных моделей Gemini,
-    полностью отсекая Lyria, Chirp, Imagen, Deep-Research и Embeddings.
+    ИСПРАВЛЕНО: ЖЕСТКО блокирует использование Flash и Lite моделей.
+    Если Pro недоступна из-за лимитов (429), скрипт выбросит ошибку, а не уйдет на слабую модель.
     """
-    # Гарантированный стек моделей в порядке приоритета
-    preferred_order = [
+    priority_models = [
+        "gemini-2.5-pro",
         "gemini-1.5-pro-latest",
-        "gemini-1.5-pro",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash",
-        "gemini-pro"
+        "gemini-1.5-pro"
     ]
-    
-    blacklisted = ["lyria", "chirp", "imagen", "veo", "deep-research", "embed", "aqa", "robotics", "medlm"]
     
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
         res = requests.get(url, timeout=10)
+        
         if res.status_code == 200:
             models_data = res.json().get('models', [])
-            available = []
+            available_pro = []
+            
             for m in models_data:
                 name = m.get('name', '').replace('models/', '')
                 methods = m.get('supportedGenerationMethods', [])
                 
-                # Строгая проверка: только семейство gemini, поддерживающее generateContent
-                if name.startswith("gemini-") and 'generateContent' in methods:
-                    if not any(b in name.lower() for b in blacklisted):
-                        available.append(name)
+                # ЖЕСТКИЙ ФИЛЬТР: только Pro, никаких flash, lite, exp или спец-моделей
+                if 'generateContent' in methods:
+                    if 'pro' in name.lower() and 'flash' not in name.lower() and 'lite' not in name.lower() and 'exp' not in name.lower():
+                        if not any(bad in name.lower() for bad in ["lyria", "chirp", "imagen", "veo", "deep-research", "embed", "aqa"]):
+                            available_pro.append(name)
             
-            # Собираем приоритетный пул
-            ordered = [m for m in preferred_order if m in available]
-            for m in available:
-                if m not in ordered:
-                    ordered.append(m)
-            if ordered:
-                return ordered
+            # Сортируем: сначала наши приоритетные, затем остальные доступные PRO
+            selected = [m for m in priority_models if m in available_pro]
+            for m in available_pro:
+                if m not in selected:
+                    selected.append(m)
+                    
+            if selected:
+                return selected
     except Exception:
         pass
         
-    return preferred_order
+    return priority_models
 
 def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
-    models_to_try = get_clean_gemini_models(key)
+    models_to_try = get_strict_pro_models(key)
     current_date = datetime.now().strftime("%Y-%m-%d")
     spicy_instruction = 'В массив "spicy_top" добавь от 5 до 10 ЖЕНСКИХ персонажей (опираясь на NexusMods и Danbooru). Сделай акцент на топологии для откровенных нарядов (body mesh, cloth physics).' if nsfw_enabled else 'Массив "spicy_top" оставь пустым.'
 
     prompt = f"""
     ТЫ — ГЛАВНЫЙ АРТ-ДИРЕКТОР И 3D-ЛИД. Твоя задача — извлечь МАКСИМАЛЬНО ТОЧНЫЙ список ТОЛЬКО ЖЕНСКИХ персонажей видеоигр из предоставленных сырых логов.
-    Пользователь будет использовать эти данные для моделирования в Blender, настройки материалов в Unity (Eevee/Cycles/URP) и монетизации ассетов на 15+ площадках.
+    Пользователь (3D-художник из РФ) будет использовать эти данные для моделирования в Blender, настройки материалов в Unity (Eevee/Cycles/URP) и монетизации ассетов на 15+ площадках.
     Сегодня {current_date}.
 
     ВХОДНЫЕ СИГНАЛЫ (Сырые логи сканеров):
@@ -346,15 +353,22 @@ def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
                     return json.loads(raw_text), model_name
             else:
                 try:
-                    err_msg = resp.json().get('error', {}).get('message', resp.text[:80])
+                    err_msg = resp.json().get('error', {}).get('message', resp.text[:100])
                 except:
-                    err_msg = resp.text[:80]
-                last_err = f"[{model_name}] {resp.status_code}: {err_msg}"
+                    err_msg = resp.text[:100]
+                last_err = f"[{model_name}] Code {resp.status_code}: {err_msg}"
+                
+                # Если у нас 429 Quota Exceeded на Pro моделях, НЕ продолжаем цикл, чтобы не уйти в бесконечность
+                if resp.status_code == 429:
+                    raise RuntimeError(f"Квота исчерпана для PRO моделей (429). Подождите минуту перед новым запросом. Ошибка: {last_err}")
+
         except Exception as e:
+            if "Квота исчерпана" in str(e):
+                raise e # Пробрасываем ошибку лимитов напрямую пользователю
             last_err = f"[{model_name}] {str(e)}"
             continue
 
-    raise RuntimeError(f"Сбой моделей Gemini. Последняя ошибка: {last_err}")
+    raise RuntimeError(f"Сбой моделей Gemini Pro. Последняя ошибка: {last_err}")
 
 def run_full_scan(depth):
     collected_feed = []
@@ -408,10 +422,10 @@ if st.button("🚀 Запустить Ultra-Precision Scan", type="primary", use
     else:
         status_container = st.status(f"📡 Сбор данных (Глубина: {scan_depth})...", expanded=True)
         try:
-            status_container.write("1. Парсинг RSS-лент Reddit для обхода блокировок...")
-            status_container.write("2. Сканирование Bilibili с эмуляцией заголовков браузера...")
-            status_container.write("3. Анализ NexusMods и Danbooru...")
-            status_container.write("4. Синтез архитектуры мешей и шейдеров через Gemini Core...")
+            status_container.write("1. Парсинг RSS-лент Reddit (с защитой от 429 блокировки)...")
+            status_container.write("2. Сканирование Bilibili...")
+            status_container.write("3. Анализ NexusMods и Danbooru (исправлен лимит тегов 422)...")
+            status_container.write("4. Синтез архитектуры мешей и шейдеров строго через Gemini PRO...")
             
             (ai_results, used_model), raw_feed = run_full_scan(scan_depth)
             
@@ -421,7 +435,7 @@ if st.button("🚀 Запустить Ultra-Precision Scan", type="primary", use
                 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 'scan_done': True
             })
-            status_container.update(label=f"Успешно! (Модель: {used_model})", state="complete", expanded=False)
+            status_container.update(label=f"Успешно! (Гарантированная модель: {used_model})", state="complete", expanded=False)
         except Exception as e:
             status_container.update(label="Ошибка", state="error", expanded=True)
             st.error(e)
