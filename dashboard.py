@@ -78,10 +78,9 @@ def get_dynamic_trending_games():
     return list(set(games))
 
 # ==========================================
-# ИСПРАВЛЕННЫЕ ФУНКЦИИ СБОРА ДАННЫХ
+# ФУНКЦИИ СБОРА ДАННЫХ
 # ==========================================
 def fetch_danbooru_velocity(depth):
-    # Убираем мультики, фокусируемся на игровых франшизах (copyright) и женских персонажах
     limit = 100 * depth
     url = f"https://danbooru.donmai.us/posts.json?limit={limit}&tags=age:<24h+1girl+-comic+-cartoon"
     results = []
@@ -94,7 +93,6 @@ def fetch_danbooru_velocity(depth):
                 copyr = post.get('tag_string_copyright', '').split()
                 score = post.get('score', 0)
                 
-                # Приоритизируем арты с высоким рейтингом
                 weight = 1 + (score * 0.1) if score > 10 else 1
                 
                 for char in chars:
@@ -103,7 +101,6 @@ def fetch_danbooru_velocity(depth):
                         full_tag = f"{char} ({franchise})"
                         char_counts[full_tag] += weight
                         
-            # Фильтр: минимум 3 вхождения, чтобы отсечь шум
             for tag, score in char_counts.most_common(20):
                 if score >= 3:
                     clean_name = tag.replace('_', ' ').title()
@@ -115,7 +112,6 @@ def fetch_danbooru_velocity(depth):
     return results
 
 def fetch_reddit_rss_fallback(depth):
-    # Обход блокировки 429 через парсинг RSS-ленты Reddit
     subs = [
         "Genshin_Impact_Leaks", "HonkaiStarRail_Leaks", "Zenlesszonezero_leaks_", 
         "WutheringWavesLeaks", "NikkeMobile", "BlueArchive", "Snowbreak", "gaming"
@@ -129,7 +125,6 @@ def fetch_reddit_rss_fallback(depth):
             res = requests.get(url, headers=headers, timeout=10)
             if res.status_code == 200:
                 feed = feedparser.parse(res.content)
-                # Берем от 5 до 15 постов в зависимости от глубины
                 for entry in feed.entries[:5 + (depth*3)]:
                     title = entry.title
                     if any(kw in title.lower() for kw in ['leak', 'drip', 'model', 'render', 'banner', 'skin', 'art']):
@@ -142,7 +137,6 @@ def fetch_reddit_rss_fallback(depth):
     return results
 
 def fetch_bilibili_hot():
-    # Исправлены заголовки для обхода антифрода -412
     url = "https://api.bilibili.com/x/web-interface/ranking/v2?rid=0&type=all"
     results = []
     headers = {
@@ -238,16 +232,33 @@ def fetch_bluesky_art(depth):
 # ИИ-АНАЛИЗАТОР 
 # ==========================================
 def get_pro_gemini_models(api_key):
-    ordered_models = ["gemini-2.5-pro", "gemini-1.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+    """
+    Динамически вычисляет список самых свежих и мощных PRO-моделей 
+    доступных для текущего API-ключа.
+    """
+    # Железобетонный фоллбэк, если API моделей недоступно
+    fallback_models = ["gemini-1.5-pro-latest", "gemini-1.5-pro", "gemini-pro"]
+    
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-        res = requests.get(url, timeout=8)
+        res = requests.get(url, timeout=10)
+        
         if res.status_code == 200:
+            # Получаем все модели, поддерживающие генерацию текста
             available = [m.get('name', '').replace('models/', '') for m in res.json().get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
-            return [m for m in ordered_models if m in available] or ordered_models
-    except:
+            
+            # Оставляем СТРОГО Pro модели. Убираем экспериментальные (exp), Flash и Lite.
+            pro_models = [m for m in available if 'pro' in m.lower() and 'exp' not in m.lower() and 'flash' not in m.lower()]
+            
+            # Сортируем по убыванию (новейшие версии, такие как 1.5, встанут первыми)
+            pro_models.sort(reverse=True)
+            
+            if pro_models:
+                return pro_models
+    except Exception:
         pass
-    return ordered_models
+        
+    return fallback_models
 
 def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
     models_to_try = get_pro_gemini_models(key)
@@ -318,12 +329,14 @@ def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
                 if json_match: return json.loads(json_match.group()), model_name
                 else: return json.loads(raw_text), model_name
             else:
-                last_err = f"[{model_name}] {resp.status_code}: {resp.text[:100]}"
+                # Если получаем 404, модель не найдена — просто идём к следующей
+                err_msg = resp.json().get('error', {}).get('message', 'Unknown error')
+                last_err = f"[{model_name}] {resp.status_code}: {err_msg}"
         except Exception as e:
             last_err = f"[{model_name}] {str(e)}"
             continue
 
-    raise RuntimeError(f"Сбой Gemini API: {last_err}")
+    raise RuntimeError(f"Все доступные PRO-модели недоступны. Последняя ошибка: {last_err}")
 
 def run_full_scan(depth):
     collected_feed = []
@@ -390,7 +403,7 @@ if st.button("🚀 Запустить Ultra-Precision Scan", type="primary", use
                 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 'scan_done': True
             })
-            status_container.update(label=f"Успешно! (Модель: {used_model})", state="complete", expanded=False)
+            status_container.update(label=f"Успешно! (Использована модель: {used_model})", state="complete", expanded=False)
         except Exception as e:
             status_container.update(label="Ошибка", state="error", expanded=True)
             st.error(e)
