@@ -41,7 +41,7 @@ twitch_secret = st.secrets.get("TWITCH_CLIENT_SECRET", "")
 tg_bot_token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
 
 st.title("🔥 Omni-Channel Art Hype Radar: Female Characters Edition")
-st.markdown("Предиктивный радар виральности женских персонажей из игр на базе первоисточников.")
+st.markdown("Предиктивный радар виральности женских персонажей из игр на базе свежих первоисточников.")
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 with st.sidebar:
@@ -49,71 +49,84 @@ with st.sidebar:
     is_16_plus = st.toggle("🔞 Режим 16+ (Spicy / Фансервис / Моды)", value=True, help="Фокус на купальниках, откровенных скинах, модах и фансервисных триггерах.")
     st.divider()
     st.header("📡 Состояние Каналов")
-    st.write(f"🧠 Gemini Core: {'🟢 Активен (Pro Prioritized)' if gemini_key else '🔴 Нет ключа'}")
+    st.write(f"🧠 Gemini Core: {'🟢 Активен' if gemini_key else '🔴 Нет ключа'}")
     st.write(f"🤖 Telegram Bot: {'🟢 Подключен' if tg_bot_token else '⚪ Выключен'}")
-    st.write(f"🎨 Danbooru (1girl 72h): 🟢 Активен")
-    st.write(f"🔍 Reddit Leaks Hubs: 🟢 Активен")
+    st.write(f"🎨 Danbooru (Velocity): 🟢 Активен")
+    st.write(f"🎨 Pixiv Daily (RSS): 🟢 Активен")
+    st.write(f"🔍 Reddit Leaks (24h): 🟢 Активен")
     st.write(f"🦋 Bluesky Stream: 🟢 Активен")
-    st.write(f"📺 YouTube API: {'🟢 Активен' if youtube_key else '⚪ Выключен'}")
+    st.write(f"📺 YouTube API (Targeted): {'🟢 Активен' if youtube_key else '⚪ Выключен'}")
     st.write(f"🎮 Steam & Twitch: {'🟢 Подключены' if (steam_key or twitch_id) else '🟡 Базовый режим'}")
 
 # ==========================================
 # СБОР ДАННЫХ ИЗ ПЕРВОИСТОЧНИКОВ
 # ==========================================
 
-def fetch_danbooru_hot_72h():
-    """Сбор взрывных женских персонажей по тегам за последние 72 часа"""
-    url = "https://danbooru.donmai.us/posts.json?limit=60&tags=age:<3d+1girl+order:score"
+def fetch_danbooru_hot():
+    """Сбор женских персонажей с расширенным пулом и оценкой свежего спроса"""
+    url = "https://danbooru.donmai.us/posts.json?limit=150&tags=age:<3d+1girl"
     results = []
     char_counts = Counter()
     try:
-        res = requests.get(url, headers={'User-Agent': 'HypeRadarPro/3.0'}, timeout=5)
+        res = requests.get(url, headers={'User-Agent': 'HypeRadarPro/4.0'}, timeout=5)
         if res.status_code == 200:
             for post in res.json():
                 chars = post.get('tag_string_character', '').split()
                 score = post.get('score', 0)
+                
+                # Отсекаем посты с низким рейтингом, фокусируясь на горячем
+                if score < 15:
+                    continue
+                    
                 for char in chars:
                     if char and char not in ["original", "unknown", "comic"]:
-                        char_counts[char] += (score + 2)
+                        char_counts[char] += score
             for char, weight in char_counts.most_common(25):
                 clean_name = char.replace('_', ' ').title()
-                results.append(f"[Danbooru 72h Female Momentum (+{weight}pts)]: {clean_name}")
+                results.append(f"[Danbooru High Score (+{weight}pts)]: {clean_name}")
     except Exception:
         pass
     return results
 
-def fetch_reddit_leaks_and_hubs():
-    """Сбор утечек и дрип-маркетинга женских персонажей"""
+def fetch_pixiv_daily_rss():
+    """Агрегация ежедневного топа Pixiv через открытый RSS-мост"""
+    url = "https://rsshub.app/pixiv/ranking/day"
+    results = []
+    try:
+        res = requests.get(url, timeout=5)
+        for entry in feedparser.parse(res.content).entries[:15]:
+            # В RSS Pixiv теги часто лежат в description, берем title как маркер
+            results.append(f"[Pixiv Daily Top]: {entry.title}")
+    except Exception:
+        pass
+    return results
+
+def fetch_reddit_fresh_leaks():
+    """Сбор утечек СТРОГО за последние 24 часа"""
     subs = [
-        ("Genshin_Impact_Leaks", 12),
-        ("HonkaiStarRail_Leaks", 12),
-        ("Zenlesszonezero_leaks_", 12),
-        ("WutheringWavesLeaks", 12),
-        ("NikkeMobile", 10),
-        ("BlueArchive", 10),
-        ("AzurLane", 8),
-        ("Snowbreak", 8),
-        ("gachagaming", 8),
-        ("Overwatch", 8),
-        ("LeagueOfLegends", 8)
+        ("Genshin_Impact_Leaks", 15), ("HonkaiStarRail_Leaks", 15), 
+        ("Zenlesszonezero_leaks_", 15), ("WutheringWavesLeaks", 15),
+        ("NikkeMobile", 10), ("BlueArchive", 10), ("Snowbreak", 10)
     ]
     results = []
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) HypeRadar/4.0'}
     for sub, limit in subs:
         try:
-            res = requests.get(f"https://www.reddit.com/r/{sub}/top.json?t=week&limit={limit}", headers=headers, timeout=4)
+            # Изолируем только свежие инфоповоды суток
+            res = requests.get(f"https://www.reddit.com/r/{sub}/top.json?t=day&limit={limit}", headers=headers, timeout=4)
             if res.status_code == 200:
                 for p in res.json().get('data', {}).get('children', []):
                     data = p.get('data', {})
                     title = data.get('title', '')
                     ups = data.get('ups', 0)
-                    results.append(f"[Reddit r/{sub} (+{ups}👍)]: {title}")
+                    # Фильтр информационного шума
+                    if ups > 40: 
+                        results.append(f"[Reddit r/{sub} 24h (+{ups}👍)]: {title}")
         except Exception:
             continue
     return results
 
 def fetch_bluesky_art():
-    """Поиск виральных артов женских персонажей в Bluesky"""
     queries = ["waifu fanart", "character leak splash", "drip marketing female", "new skin girl", "3dart character"]
     results = []
     for q in queries:
@@ -129,13 +142,17 @@ def fetch_bluesky_art():
             pass
     return results
 
-def fetch_youtube_trailers(api_key):
+def fetch_youtube_targeted(api_key):
+    """Таргетированный поиск трейлеров и анонсов"""
     if not api_key: return []
-    time_limit = (datetime.utcnow() - timedelta(days=4)).isoformat() + "Z"
+    time_limit = (datetime.utcnow() - timedelta(days=2)).isoformat() + "Z"
+    
+    # Сужаем запрос, чтобы исключить кликбейт и фокусимся на игровых трейлерах
     params = {
         "part": "snippet",
-        "q": "female character trailer OR drip marketing reveal OR banner teaser OR new skin preview",
+        "q": "(Genshin OR Honkai OR Zenless OR Wuthering OR Nikke OR Snowbreak) (trailer OR drip marketing OR teaser OR demo)",
         "type": "video",
+        "videoCategoryId": "20", # Gaming category
         "publishedAfter": time_limit,
         "maxResults": 15,
         "key": api_key
@@ -145,18 +162,13 @@ def fetch_youtube_trailers(api_key):
         res = requests.get("https://www.googleapis.com/youtube/v3/search", params=params, timeout=5)
         if res.status_code == 200:
             for item in res.json().get('items', []):
-                results.append(f"[YouTube ({item['snippet']['channelTitle']})]: {item['snippet']['title']}")
+                results.append(f"[YouTube Gaming ({item['snippet']['channelTitle']})]: {item['snippet']['title']}")
     except Exception:
         pass
     return results
 
 def fetch_rss_news():
-    feeds = [
-        "https://www.gematsu.com/feed",
-        "https://www.siliconera.com/feed/",
-        "https://stopgame.ru/rss/news.xml",
-        "https://kotaku.com/rss"
-    ]
+    feeds = ["https://www.gematsu.com/feed", "https://www.siliconera.com/feed/"]
     results = []
     headers = {'User-Agent': 'Mozilla/5.0'}
     for url in feeds:
@@ -195,7 +207,6 @@ def fetch_steam_twitch(steam_k, c_id, c_secret):
 # ==========================================
 
 def get_pro_gemini_models(api_key):
-    """Выбор лучших Pro моделей без Flash-Lite"""
     pro_models = []
     flash_models = []
     try:
@@ -205,7 +216,6 @@ def get_pro_gemini_models(api_key):
             for m in res.json().get('models', []):
                 if 'generateContent' in m.get('supportedGenerationMethods', []):
                     name = m.get('name', '').replace('models/', '')
-                    # Исключаем легковесные и урезанные модели
                     if 'lite' in name.lower():
                         continue
                     if 'pro' in name.lower():
@@ -215,16 +225,10 @@ def get_pro_gemini_models(api_key):
     except Exception:
         pass
 
-    # Приоритет отдаем лучшим Pro-моделям
     ordered_models = pro_models + flash_models
     fallback = [
-        "gemini-1.5-pro",
-        "gemini-2.5-pro",
-        "gemini-2.0-pro-exp-02-05",
-        "gemini-1.5-pro-latest",
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash"
+        "gemini-1.5-pro", "gemini-2.5-pro", "gemini-2.0-pro-exp-02-05",
+        "gemini-1.5-pro-latest", "gemini-2.5-flash", "gemini-2.0-flash"
     ]
     for f in fallback:
         if f not in ordered_models:
@@ -235,28 +239,24 @@ def get_pro_gemini_models(api_key):
 def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
     models_to_try = get_pro_gemini_models(key)
     current_date = datetime.now().strftime("%Y-%m-%d")
-    spicy_instruction = 'В массив "spicy_top" добавь от 6 до 10 ЖЕНСКИХ персонажей с виральным фансервисом, купальниками, модами, чулками или открытыми нарядами.' if nsfw_enabled else 'Массив "spicy_top" оставь пустым.'
+    spicy_instruction = 'В массив "spicy_top" добавь от 5 до 10 ЖЕНСКИХ персонажей с виральным фансервисом или открытыми нарядами, строго обосновав это сигналом.' if nsfw_enabled else 'Массив "spicy_top" оставь пустым.'
 
     prompt = f"""
-    ТЫ — ГЛАВНЫЙ АРТ-АНАЛИТИК И ЛИД-КОНЦЕПТЕР. Твоя цель — выдать максимально точный, объективный и объемный список ЖЕНСКИХ персонажей видеоигр, создание 3D/2D фан-арта по которым сегодня гарантирует максимальный охват и вовлеченность. Сегодня {current_date}.
+    ТЫ — ГЛАВНЫЙ АРТ-АНАЛИТИК И ЛИД-КОНЦЕПТЕР. Твоя цель — проанализировать сырые данные и выдать точный список ЖЕНСКИХ персонажей видеоигр.
+    Создание 3D-моделей (Blender/Unity, настройка топологии, запекание текстур) и фанартов по этим героиням сегодня гарантирует максимальный охват при мультиплатформенной публикации (на 15+ площадках). Сегодня {current_date}.
 
-    ВХОДНЫЕ СВЕЖИЕ СИГНАЛЫ (Danbooru 72h 1girl, Reddit Leaks, Bluesky, YouTube, Steam/Twitch):
+    ВХОДНЫЕ СИГНАЛЫ (Danbooru 1girl, Reddit Leaks 24h, Pixiv Daily, Bluesky, YouTube):
     {json.dumps(feed_dump, ensure_ascii=False)}
 
     ЖЕЛЕЗНЫЕ ПРАВИЛА ФИЛЬТРАЦИИ И ГЕНЕРАЦИИ:
-    1. СТРОГО ИСКЛЮЧИТЕЛЬНО ЖЕНСКИЕ ПЕРСОНАЖИ (Female Only).
-       - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО включать мужских персонажей (никаких Kratos, Wise, Dante, Aether, FL4K, Zhongli и т.д.).
-       - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО включать негуманоидных монстров, роботов без женского гендера и технику.
-    2. ОБЪЕМ ВЫБОРКИ (НЕ УРЕЗАТЬ!):
-       - "gacha_top": ОБЯЗАТЕЛЬНО сформируй список ровно из 15-20 самых хайповых женских персонажей (Genshin, Honkai Star Rail, Zenless Zone Zero, Wuthering Waves, Nikke, Blue Archive, Azur Lane, Snowbreak, Fate и др.).
-       - "classic_top": ОБЯЗАТЕЛЬНО сформируй список ровно из 15-20 самых востребованных женских персонажей из AAA/соревновательных/классических игр (League of Legends, Overwatch, Resident Evil, Final Fantasy, Valorant, NieR, Cyberpunk, Baldur's Gate 3, Tekken, Street Fighter, Stellar Blade и др.).
-       - "world_top": ровно 5 женских топ-лидеров.
-       - "ru_top": ровно 5 женских фаворитов для СНГ/РФ.
-    3. СТРОГАЯ ПРИВЯЗКА К РЕАЛЬНОСТИ:
-       - Опирайся на реальные инфоповоды из ленты: свежие утечки внешности (Leaks), дрип-маркетинг, анонсы баннеров, новые скины, бум артов на Danbooru за 72ч.
-       - Если для популярного персонажа нет события за 72ч, пиши причину: "Стабильный культовый спрос / фансервис".
+    1. ИСКЛЮЧИТЕЛЬНО ЖЕНСКИЕ ПЕРСОНАЖИ (Female Only). Никаких мужских персонажей или мехов.
+    2. ДВА СЛОЯ ДАННЫХ (Борьба с галлюцинациями):
+       - Сигнальный слой ("gacha_top", "world_top", "ru_top"): ВКЛЮЧАЙ ТОЛЬКО ТЕХ ПЕРСОНАЖЕЙ, чьи имена или явные отсылки есть во ВХОДНЫХ СИГНАЛАХ выше. Не выдумывай имена ради количества. Добавляй столько, сколько есть реально в фиде.
+       - Вечнозеленый слой ("classic_top"): Культовые героини со стабильным спросом (можешь брать из своих знаний, 5-10 позиций).
+    3. ПОДТВЕРЖДЕНИЕ ИСТОЧНИКОМ:
+       - Для каждого персонажа ОБЯЗАТЕЛЬНО заполни поле "source_signal", скопировав точную причину или строку из входного JSON, которая подтверждает хайп.
     4. ПРАКТИЧЕСКИЕ ВИЗУАЛЬНЫЕ ХУКИ (visual_hook):
-       - Для каждой героини укажи точную визуальную зацепку для художника: ракурс, элемент костюма (чулки, вырез, декольте, купальник, мокрый эффект), освещение, оружие или вирусная поза.
+       - Укажи точную визуальную зацепку: важные элементы одежды/меша, специфика материалов для движка (кожа, ткани, отражения в Unity/Cycles), ракурс или вирусная поза.
     {spicy_instruction}
 
     ВЕРНИ ОТВЕТ СТРОГО В ВИДЕ ВАЛИДНОГО JSON СЛЕДУЮЩЕЙ СТРУКТУРЫ:
@@ -266,25 +266,26 @@ def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
         "game": "Игра",
         "virality_score": 99,
         "past_72h_event": "Точный факт/инфоповод",
-        "upcoming_catalyst": "Что подогреет интерес в ближайшие дни",
-        "visual_hook": "Точный визуальный акцент и ракурс для 3D/2D",
-        "why_draw_today": "Почему именно она принесет максимальный охват прямо сейчас",
-        "tags": ["3dart", "character", "waifu"]
+        "source_signal": "Точная строка из логов",
+        "upcoming_catalyst": "Что подогреет интерес",
+        "visual_hook": "Детали для 3D меша / текстур или композиции",
+        "why_draw_today": "Почему это сработает на 15+ площадках",
+        "tags": ["3dart", "blender", "unity"]
       }},
       "spicy_top": [
-        {{ "rank": 1, "name": "Женский персонаж", "game": "Игра", "analysis": "Причина спайси-хайпа", "visual_hook": "Деталь откровенного костюма/позы", "score": 96, "tags": ["spicy", "bikini"] }}
+        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "analysis": "Причина", "visual_hook": "Хук", "source_signal": "Источник из фида", "score": 96, "tags": ["spicy"] }}
       ],
       "world_top": [
-        {{ "rank": 1, "name": "Женский персонаж", "game": "Игра", "analysis": "Причина мирового спроса", "score": 97, "tags": ["trend"] }}
+        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "analysis": "Причина", "source_signal": "Источник", "score": 97, "tags": ["trend"] }}
       ],
       "ru_top": [
-        {{ "rank": 1, "name": "Женский персонаж", "game": "Игра", "analysis": "Причина популярности в СНГ/РФ", "score": 94, "tags": ["ru_fav"] }}
+        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "analysis": "Причина популярности в СНГ", "source_signal": "Источник", "score": 94, "tags": ["ru_fav"] }}
       ],
       "gacha_top": [
-        {{ "rank": 1, "name": "Женский персонаж 1", "game": "Игра", "score": 98, "reach": 96, "likes": 97, "visual_hook": "Визуальный хук", "reason": "Инфоповод/Лик/Баннер", "trend": "🔥" }}
+        {{ "rank": 1, "name": "Персонаж 1", "game": "Игра", "score": 98, "reach": 96, "likes": 97, "visual_hook": "Специфика модели", "source_signal": "Строка из логов", "reason": "Лик/Баннер", "trend": "🔥" }}
       ],
       "classic_top": [
-        {{ "rank": 1, "name": "Женский персонаж 1", "game": "Игра", "score": 95, "reach": 91, "likes": 93, "visual_hook": "Визуальный хук", "reason": "Инфоповод/Культ/Скин", "trend": "📈" }}
+        {{ "rank": 1, "name": "Персонаж 1", "game": "Игра", "score": 95, "reach": 91, "likes": 93, "visual_hook": "Специфика модели", "source_signal": "Вечнозеленый спрос / Культ", "reason": "Культ/Скин", "trend": "📈" }}
       ]
     }}
     """
@@ -321,14 +322,15 @@ def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
 
 def run_full_scan():
     collected_feed = []
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=7) as executor:
         futures = [
-            executor.submit(fetch_danbooru_hot_72h),
-            executor.submit(fetch_reddit_leaks_and_hubs),
+            executor.submit(fetch_danbooru_hot),
+            executor.submit(fetch_reddit_fresh_leaks),
             executor.submit(fetch_bluesky_art),
-            executor.submit(fetch_youtube_trailers, youtube_key),
+            executor.submit(fetch_youtube_targeted, youtube_key),
             executor.submit(fetch_rss_news),
-            executor.submit(fetch_steam_twitch, steam_key, twitch_id, twitch_secret)
+            executor.submit(fetch_steam_twitch, steam_key, twitch_id, twitch_secret),
+            executor.submit(fetch_pixiv_daily_rss)
         ]
         for f in futures:
             collected_feed.extend(f.result())
@@ -350,13 +352,14 @@ def start_telegram_bot(token):
 
     @bot.message_handler(commands=['scan'])
     def handle_scan(message):
-        bot.reply_to(message, "📡 Сканирую первоисточники и запускаю Pro-анализ женских персонажей...")
+        bot.reply_to(message, "📡 Сканирую 24-часовые инфоповоды и запускаю Pro-анализ...")
         try:
             (ai_res, model), _ = run_full_scan()
             leader = ai_res.get('absolute_leader', {})
             msg = f"👑 *ТОП ЖЕНСКИЙ ПЕРСОНАЖ:*\n*{leader.get('name', 'N/A')}* ({leader.get('game', 'N/A')})\n"
             msg += f"🎯 *Визуальный хук:* {leader.get('visual_hook', 'N/A')}\n"
-            msg += f"📌 *Инфоповод:* {leader.get('past_72h_event', 'N/A')}\n\n"
+            msg += f"📌 *Инфоповод:* {leader.get('past_72h_event', 'N/A')}\n"
+            msg += f"📡 *Сигнал:* {leader.get('source_signal', 'N/A')}\n\n"
             msg += "🌍 *ТОП-3 В МИРЕ:*\n"
             for i, itm in enumerate(ai_res.get('world_top', [])[:3]):
                 msg += f"{i+1}. {itm['name']} ({itm.get('game')}) — {itm.get('score')}/100\n"
@@ -373,16 +376,16 @@ start_telegram_bot(tg_bot_token)
 # ИНТЕРФЕЙС STREAMLIT
 # ==========================================
 
-if st.button("🚀 Запустить глубокий скан (Female Only / Pro Engine)", type="primary", use_container_width=True):
+if st.button("🚀 Запустить глубокий скан (Fresh Signals / Pro Engine)", type="primary", use_container_width=True):
     if not gemini_key:
         st.error("⚠️ Добавьте GEMINI_API_KEY в Secrets приложения.")
     else:
-        status_container = st.status("📡 Сбор сигналов и синтез аналитики...", expanded=True)
+        status_container = st.status("📡 Сбор свежих сигналов и синтез аналитики...", expanded=True)
         try:
-            status_container.write("1. Проверяем Danbooru на женские теги (1girl, 72h momentum)...")
-            status_container.write("2. Парсим хабы утечек и анонсов (Genshin, HSR, ZZZ, WuWa, Nikke, BA)...")
-            status_container.write("3. Сканируем Bluesky, YouTube трейлеры, Steam/Twitch...")
-            status_container.write("4. Подключаем флагманскую модель Gemini Pro и формируем полные списки...")
+            status_container.write("1. Проверяем Danbooru & Pixiv Daily (High Momentum)...")
+            status_container.write("2. Парсим хабы утечек за последние 24 часа...")
+            status_container.write("3. Сканируем Bluesky и таргетированные YouTube анонсы...")
+            status_container.write("4. Строгая валидация фактов через Gemini Pro Engine...")
             
             (ai_results, used_model), raw_feed = run_full_scan()
             
@@ -393,7 +396,7 @@ if st.button("🚀 Запустить глубокий скан (Female Only / P
                 'scan_done': True
             })
             status_container.update(label=f"Анализ завершен! Модель: {used_model}", state="complete", expanded=False)
-            st.toast("Полный бэклог женских персонажей сформирован!", icon="✨")
+            st.toast("Бэклог персонажей обновлен на базе реальных данных!", icon="✨")
         except Exception as e:
             status_container.update(label="Ошибка анализа данных", state="error", expanded=True)
             st.error(f"Детали ошибки: {e}")
@@ -415,19 +418,19 @@ if st.session_state.get('scan_done', False):
 <div style="text-transform: uppercase; letter-spacing: 2px; font-size: 12px; margin-bottom: 6px; color: #fbbf24;">👑 Главный объект внимания аудитории</div>
 <div class="hero-title">{leader.get('name', 'Нет данных')} <span style="font-size:20px; font-weight:400; opacity:0.85; color:#cbd5e1;">— {leader.get('game', 'Нет данных')}</span></div>
 <div style="font-size: 15px; margin: 4px 0 10px 0;">Индекс виральности: <b>{leader.get('virality_score', 0)}/100</b></div>
-<div class="fact-box">🎯 <b>Визуальный фокус для рендера:</b> {leader.get('visual_hook', 'Детализированный костюм / фирменная поза')}</div>
-<div class="fact-box">📌 <b>Событие за 72ч:</b> {leader.get('past_72h_event', 'Высокий интерес в фандоме')}</div>
-<div class="catalyst-box">⏳ <b>Катализатор:</b> {leader.get('upcoming_catalyst', 'Ближайший баннер или релиз')}</div>
-<div style="margin-top: 10px; font-size: 13px; color: #94a3b8;">💡 <b>Почему рисовать сегодня:</b> {leader.get('why_draw_today', 'Пик внимания к персонажу')}</div>
+<div class="fact-box">🎯 <b>Визуальный фокус (Mesh/Render):</b> {leader.get('visual_hook', 'Особые детали')}</div>
+<div class="fact-box">📡 <b>Подтверждающий сигнал:</b> {leader.get('source_signal', 'Отсутствует')}</div>
+<div class="catalyst-box">⏳ <b>Событие / Катализатор:</b> {leader.get('upcoming_catalyst', 'Ближайший релиз')}</div>
+<div style="margin-top: 10px; font-size: 13px; color: #94a3b8;">💡 <b>Стратегия мульти-паблишинга:</b> {leader.get('why_draw_today', 'Пик внимания к персонажу')}</div>
 <div style="margin-top: 14px;">{tags_html}</div>
 </div>
         """, unsafe_allow_html=True)
 
     # 2. БЛОК 16+ SPICY
-    medals, classes = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣"], ["top1", "top2", "top3", "", "", ""]
+    medals, classes = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"], ["top1", "top2", "top3", "", "", "", "", ""]
     
     if is_16_plus and res.get('spicy_top'):
-        st.subheader("🔞 Тренды 16+ (Spicy / Фансервис / Скины)")
+        st.subheader("🔞 Тренды 16+ (Spicy / Фансервис / Моды)")
         spicy_items = res.get('spicy_top', [])
         spicy_cols = st.columns(min(3, len(spicy_items)))
         for idx, item in enumerate(spicy_items[:3]):
@@ -435,8 +438,8 @@ if st.session_state.get('scan_done', False):
                 st.markdown(f"""
 <div class="spicy-card">
 <h4 style="margin-bottom: 5px; color: #ff9ebf;">{medals[idx]} {item.get('name', '')} <span style="font-size:13px; color:#a5b1c2;">({item.get('game', '')})</span></h4>
-<p style="font-size: 13px; color: #f1f5f9; margin-bottom: 6px;"><b>Триггер:</b> {item.get('analysis', '')}</p>
-<p style="font-size: 12px; color: #f472b6; margin-bottom: 8px;">👙 <b>Хук:</b> {item.get('visual_hook', 'Акцент на костюме')}</p>
+<p style="font-size: 13px; color: #f1f5f9; margin-bottom: 6px;"><b>Сигнал:</b> {item.get('source_signal', 'Вечнозеленый спрос')}</p>
+<p style="font-size: 12px; color: #f472b6; margin-bottom: 8px;">👙 <b>Хук:</b> {item.get('visual_hook', 'Акцент на формах/костюме')}</p>
 <div>{" ".join([f"<span class='badge spicy-badge'>#{t}</span>" for t in item.get('tags', [])])}</div>
 </div>
                 """, unsafe_allow_html=True)
@@ -450,6 +453,7 @@ if st.session_state.get('scan_done', False):
             st.markdown(f"""
 <div class="metric-card {classes[idx]}">
 <h4 style="margin-bottom: 4px;">{medals[idx]} {item.get('name', '')} <span style="font-size:13px; color:#888;">({item.get('game', '')})</span> — {item.get('score', 0)}/100</h4>
+<p style="font-size: 12px; color: #64748b; margin-bottom: 4px;">📡 {item.get('source_signal', 'Сигнал не найден')}</p>
 <p style="font-size: 13px; color: #cbd5e1; margin: 0;">{item.get('analysis', '')}</p>
 </div>
             """, unsafe_allow_html=True)
@@ -460,6 +464,7 @@ if st.session_state.get('scan_done', False):
             st.markdown(f"""
 <div class="metric-card {classes[idx]}">
 <h4 style="margin-bottom: 4px;">{medals[idx]} {item.get('name', '')} <span style="font-size:13px; color:#888;">({item.get('game', '')})</span> — {item.get('score', 0)}/100</h4>
+<p style="font-size: 12px; color: #64748b; margin-bottom: 4px;">📡 {item.get('source_signal', 'Сигнал не найден')}</p>
 <p style="font-size: 13px; color: #cbd5e1; margin: 0;">{item.get('analysis', '')}</p>
 </div>
             """, unsafe_allow_html=True)
@@ -496,15 +501,16 @@ if st.session_state.get('scan_done', False):
             st.plotly_chart(fig_c, use_container_width=True)
 
     # 5. ПОЛНЫЕ ТАБЛИЦЫ С ВИЗУАЛЬНЫМИ ХУКАМИ
-    st.subheader("📋 Практический бэклог для создания артов (Полные списки)")
+    st.subheader("📋 Практический бэклог для рендера (Полные списки)")
     col_cfg = {
         "rank": st.column_config.NumberColumn("№", format="%d"),
         "name": "Героиня",
         "game": "Игра",
         "trend": "Тренд",
         "score": st.column_config.ProgressColumn("Хайп", min_value=0, max_value=100),
-        "visual_hook": "🎨 Визуальный хук для рендера",
-        "reason": "Конкретная причина хайпа / лика",
+        "visual_hook": "🎨 Акцент (Mesh/Textures)",
+        "source_signal": "📡 Источник (Сигнал)",
+        "reason": "Конкретная причина хайпа",
         "reach": st.column_config.NumberColumn("Reach", format="%d"),
         "likes": st.column_config.NumberColumn("Likes", format="%d")
     }
@@ -516,7 +522,7 @@ if st.session_state.get('scan_done', False):
             st.dataframe(df_gacha, use_container_width=True, hide_index=True, column_config=col_cfg, height=580)
 
     with t2:
-        st.markdown(f"<h4 style='color: #ff4b4b;'>⚔️ AAA & Классические Героини ({len(df_classic)} персонажей)</h4>", unsafe_allow_html=True)
+        st.markdown(f"<h4 style='color: #ff4b4b;'>⚔️ AAA & Классика ({len(df_classic)} персонажей)</h4>", unsafe_allow_html=True)
         if not df_classic.empty:
             st.dataframe(df_classic, use_container_width=True, hide_index=True, column_config=col_cfg, height=580)
             
