@@ -228,58 +228,54 @@ def fetch_bluesky_art(depth):
     return results
 
 # ==========================================
-# ИИ-АНАЛИЗАТОР (СТРОГИЙ ОТБОР PRO-МОДЕЛЕЙ)
+# ИИ-АНАЛИЗАТОР (ФИЛЬТРАЦИЯ ТОЛЬКО GEMINI)
 # ==========================================
-def get_pro_gemini_models(api_key):
+def get_clean_gemini_models(api_key):
     """
-    Возвращает только проверенные генеративные PRO-модели,
-    исключая специализированные preview-эндпоинты (deep-research, embeddings).
+    Формирует список только валидных генеративных моделей Gemini,
+    полностью отсекая Lyria, Chirp, Imagen, Deep-Research и Embeddings.
     """
-    priority_models = [
-        "gemini-2.5-pro",
+    # Гарантированный стек моделей в порядке приоритета
+    preferred_order = [
         "gemini-1.5-pro-latest",
         "gemini-1.5-pro",
-        "gemini-2.0-pro-exp-02-05",
-        "gemini-2.5-flash",
-        "gemini-1.5-flash"
+        "gemini-2.0-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash",
+        "gemini-pro"
     ]
     
-    excluded_keywords = ["deep-research", "embed", "imagen", "aqa", "robotics", "whisper", "tts"]
+    blacklisted = ["lyria", "chirp", "imagen", "veo", "deep-research", "embed", "aqa", "robotics", "medlm"]
     
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
         res = requests.get(url, timeout=10)
-        
         if res.status_code == 200:
             models_data = res.json().get('models', [])
-            available_clean = []
-            
+            available = []
             for m in models_data:
                 name = m.get('name', '').replace('models/', '')
                 methods = m.get('supportedGenerationMethods', [])
                 
-                # Только модели с поддержкой стандартного generateContent
-                if 'generateContent' in methods:
-                    if not any(bad in name.lower() for bad in excluded_keywords):
-                        available_clean.append(name)
+                # Строгая проверка: только семейство gemini, поддерживающее generateContent
+                if name.startswith("gemini-") and 'generateContent' in methods:
+                    if not any(b in name.lower() for b in blacklisted):
+                        available.append(name)
             
-            # Собираем приоритетный список доступных Pro-моделей
-            selected = [m for m in priority_models if m in available_clean]
-            
-            # Добавляем остальные доступные pro, если они есть
-            for m in available_clean:
-                if 'pro' in m.lower() and m not in selected:
-                    selected.append(m)
-                    
-            if selected:
-                return selected
+            # Собираем приоритетный пул
+            ordered = [m for m in preferred_order if m in available]
+            for m in available:
+                if m not in ordered:
+                    ordered.append(m)
+            if ordered:
+                return ordered
     except Exception:
         pass
         
-    return priority_models
+    return preferred_order
 
 def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
-    models_to_try = get_pro_gemini_models(key)
+    models_to_try = get_clean_gemini_models(key)
     current_date = datetime.now().strftime("%Y-%m-%d")
     spicy_instruction = 'В массив "spicy_top" добавь от 5 до 10 ЖЕНСКИХ персонажей (опираясь на NexusMods и Danbooru). Сделай акцент на топологии для откровенных нарядов (body mesh, cloth physics).' if nsfw_enabled else 'Массив "spicy_top" оставь пустым.'
 
@@ -358,7 +354,7 @@ def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
             last_err = f"[{model_name}] {str(e)}"
             continue
 
-    raise RuntimeError(f"Сбой моделей. Последняя ошибка: {last_err}")
+    raise RuntimeError(f"Сбой моделей Gemini. Последняя ошибка: {last_err}")
 
 def run_full_scan(depth):
     collected_feed = []
@@ -415,7 +411,7 @@ if st.button("🚀 Запустить Ultra-Precision Scan", type="primary", use
             status_container.write("1. Парсинг RSS-лент Reddit для обхода блокировок...")
             status_container.write("2. Сканирование Bilibili с эмуляцией заголовков браузера...")
             status_container.write("3. Анализ NexusMods и Danbooru...")
-            status_container.write("4. Синтез архитектуры мешей и шейдеров через Gemini Pro...")
+            status_container.write("4. Синтез архитектуры мешей и шейдеров через Gemini Core...")
             
             (ai_results, used_model), raw_feed = run_full_scan(scan_depth)
             
