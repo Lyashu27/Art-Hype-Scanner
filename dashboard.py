@@ -15,7 +15,7 @@ import re
 import math
 
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
-st.set_page_config(page_title="Omni-Channel Art Hype Radar (Flash Edition)", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Omni-Channel Art Hype Radar Pro (Female Only)", page_icon="🔥", layout="wide")
 
 st.markdown("""
 <style>
@@ -42,8 +42,8 @@ twitch_secret = st.secrets.get("TWITCH_CLIENT_SECRET", "")
 tg_bot_token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
 nexus_key = st.secrets.get("NEXUSMODS_API_KEY", "")
 
-st.title("⚡ Omni-Channel Art Hype Radar: Flash Turbo Edition")
-st.markdown("Высокоскоростной радар виральности женских персонажей на моделях **Gemini Flash** (без лимитов квоты).")
+st.title("⚡ Omni-Channel Art Hype Radar: Gemini 3 Flash Edition")
+st.markdown("Предиктивный радар виральности женских персонажей на новейшем движке Gemini 3 Flash.")
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 with st.sidebar:
@@ -86,7 +86,7 @@ def fetch_danbooru_velocity(depth):
     results = []
     char_counts = Counter()
     try:
-        res = requests.get(url, headers={'User-Agent': 'HypeRadarFlash/1.0'}, timeout=15)
+        res = requests.get(url, headers={'User-Agent': 'HypeRadarPro/8.0'}, timeout=15)
         if res.status_code == 200:
             for post in res.json():
                 tags = post.get('tag_string', '')
@@ -233,16 +233,50 @@ def fetch_bluesky_art(depth):
     return results
 
 # ==========================================
-# ИИ-АНАЛИЗАТОР (FLASH ENGINE)
+# ИИ-АНАЛИЗАТОР (НОВЕЙШИЕ FLASH МОДЕЛИ)
 # ==========================================
-def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
-    # Пул стабильных Flash-моделей
-    models_to_try = [
+def get_latest_flash_models(api_key):
+    """
+    Динамически выявляет доступные Flash-модели нового поколения (Gemini 3.x Flash).
+    """
+    priority_order = [
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-2.5-flash",
         "gemini-2.0-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash"
+        "gemini-3-flash-preview"
     ]
     
+    blacklisted = ["tts", "image", "audio", "video", "veo", "banana", "embed", "deep-research", "live", "translate"]
+    
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            models_data = res.json().get('models', [])
+            available = []
+            for m in models_data:
+                name = m.get('name', '').replace('models/', '')
+                methods = m.get('supportedGenerationMethods', [])
+                if name.startswith('gemini-') and 'generateContent' in methods:
+                    if not any(b in name.lower() for b in blacklisted):
+                        available.append(name)
+            
+            # Приоритет: сначала новейшие Flash
+            final_list = [m for m in priority_order if m in available]
+            for m in available:
+                if m not in final_list:
+                    final_list.append(m)
+            if final_list:
+                return final_list
+    except Exception:
+        pass
+        
+    return priority_order
+
+def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
+    models_to_try = get_latest_flash_models(key)
     current_date = datetime.now().strftime("%Y-%m-%d")
     spicy_instruction = 'В массив "spicy_top" добавь от 5 до 10 ЖЕНСКИХ персонажей (опираясь на NexusMods и Danbooru). Сделай акцент на топологии для откровенных нарядов (body mesh, cloth physics).' if nsfw_enabled else 'Массив "spicy_top" оставь пустым.'
 
@@ -323,11 +357,11 @@ def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
             last_err = f"[{model_name}] {str(e)}"
             continue
 
-    raise RuntimeError(f"Сбой Flash моделей: {last_err}")
+    raise RuntimeError(f"Сбой моделей Flash: {last_err}")
 
 def run_full_scan(depth):
     collected_feed = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:
         futures = [
             executor.submit(fetch_danbooru_velocity, depth),
             executor.submit(fetch_reddit_rss_fallback, depth),
@@ -375,12 +409,12 @@ if st.button("🚀 Запустить Flash Turbo Scan", type="primary", use_con
     if not gemini_key:
         st.error("⚠️ Добавьте GEMINI_API_KEY в Secrets.")
     else:
-        status_container = st.status(f"⚡ Скоростной сбор данных (Глубина: {scan_depth})...", expanded=True)
+        status_container = st.status(f"⚡ Сбор данных через Gemini Flash Engine...", expanded=True)
         try:
             status_container.write("1. Парсинг RSS-лент Reddit...")
             status_container.write("2. Сканирование Bilibili...")
             status_container.write("3. Анализ NexusMods и Danbooru...")
-            status_container.write("4. Мгновенная генерация через Gemini Flash Core...")
+            status_container.write("4. Синтез архитектуры мешей и шейдеров через Gemini Flash...")
             
             (ai_results, used_model), raw_feed = run_full_scan(scan_depth)
             
@@ -390,7 +424,7 @@ if st.button("🚀 Запустить Flash Turbo Scan", type="primary", use_con
                 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 'scan_done': True
             })
-            status_container.update(label=f"Готово за секунды! (Модель: {used_model})", state="complete", expanded=False)
+            status_container.update(label=f"Успешно сгенерировано! (Модель: {used_model})", state="complete", expanded=False)
         except Exception as e:
             status_container.update(label="Ошибка", state="error", expanded=True)
             st.error(e)
