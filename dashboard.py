@@ -43,13 +43,13 @@ tg_bot_token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
 nexus_key = st.secrets.get("NEXUSMODS_API_KEY", "")
 
 st.title("🔥 Omni-Channel Art Hype Radar: Ultra-Precision Edition")
-st.markdown("Медленный, но точный парсер виральности женских персонажей для 3D-моделлеров (Blender/Unity).")
+st.markdown("Предиктивный радар виральности женских персонажей на Pro-моделях Gemini.")
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 with st.sidebar:
     st.header("⚙️ Параметры Сбора")
     is_16_plus = st.toggle("🔞 Режим 16+ (Spicy / Фансервис / Моды)", value=True)
-    scan_depth = st.slider("Глубина парсинга (влияет на время)", min_value=1, max_value=3, value=2, help="1=Быстро, 3=Максимально точно (медленно)")
+    scan_depth = st.slider("Глубина парсинга", min_value=1, max_value=3, value=2)
     st.divider()
     st.header("📡 Состояние Каналов")
     st.write(f"🧠 Gemini Core: {'🟢 Активен' if gemini_key else '🔴 Нет ключа'}")
@@ -92,7 +92,6 @@ def fetch_danbooru_velocity(depth):
                 chars = post.get('tag_string_character', '').split()
                 copyr = post.get('tag_string_copyright', '').split()
                 score = post.get('score', 0)
-                
                 weight = 1 + (score * 0.1) if score > 10 else 1
                 
                 for char in chars:
@@ -106,7 +105,7 @@ def fetch_danbooru_velocity(depth):
                     clean_name = tag.replace('_', ' ').title()
                     results.append(f"[Danbooru High Velocity]: {clean_name} (Индекс спроса: {math.floor(score)})")
         else:
-             results.append(f"[Danbooru Error]: Status {res.status_code}")
+            results.append(f"[Danbooru Error]: Status {res.status_code}")
     except Exception as e:
         results.append(f"[Danbooru Exception]: {str(e)}")
     return results
@@ -128,9 +127,9 @@ def fetch_reddit_rss_fallback(depth):
                 for entry in feed.entries[:5 + (depth*3)]:
                     title = entry.title
                     if any(kw in title.lower() for kw in ['leak', 'drip', 'model', 'render', 'banner', 'skin', 'art']):
-                         results.append(f"[Reddit r/{sub} RSS]: {title}")
+                        results.append(f"[Reddit r/{sub} RSS]: {title}")
             else:
-                 results.append(f"[Reddit Error r/{sub}]: Status {res.status_code}")
+                results.append(f"[Reddit Error r/{sub}]: Status {res.status_code}")
         except Exception as e:
             results.append(f"[Reddit Exception r/{sub}]: {str(e)}")
         time.sleep(0.5) 
@@ -152,7 +151,7 @@ def fetch_bilibili_hot():
                 if any(kw in title for kw in ['原神', '星穹铁道', '绝区零', '崩坏', '鸣潮', '明日方舟', '碧蓝航线']):
                     results.append(f"[Bilibili Hot Trend (CN)]: {title}")
         else:
-             results.append(f"[Bilibili Error]: Code {res.status_code}")
+            results.append(f"[Bilibili Error]: Code {res.status_code}")
     except Exception as e:
         results.append(f"[Bilibili Exception]: {str(e)}")
     return results
@@ -175,9 +174,9 @@ def fetch_nexusmods_trending(api_key):
                     if any(kw in name.lower() + summary.lower() for kw in ['outfit', 'body', 'hair', 'face', 'cbbe', 'girl', 'female', 'dress']):
                         results.append(f"[NexusMods {game} Top]: {name} - {summary}")
             elif res.status_code == 401:
-                results.append(f"[NexusMods Error]: Неверный API ключ")
+                results.append("[NexusMods Error]: Неверный API ключ")
                 break
-        except Exception as e:
+        except Exception:
             pass
         time.sleep(0.5)
     return results
@@ -209,7 +208,7 @@ def fetch_youtube_targeted(api_key, depth):
                 for item in res.json().get('items', []):
                     results.append(f"[YouTube Gaming]: {item['snippet']['title']}")
         except Exception as e:
-             results.append(f"[YouTube Exception]: {str(e)}")
+            results.append(f"[YouTube Exception]: {str(e)}")
     return results
 
 def fetch_bluesky_art(depth):
@@ -229,36 +228,55 @@ def fetch_bluesky_art(depth):
     return results
 
 # ==========================================
-# ИИ-АНАЛИЗАТОР 
+# ИИ-АНАЛИЗАТОР (СТРОГИЙ ОТБОР PRO-МОДЕЛЕЙ)
 # ==========================================
 def get_pro_gemini_models(api_key):
     """
-    Динамически вычисляет список самых свежих и мощных PRO-моделей 
-    доступных для текущего API-ключа.
+    Возвращает только проверенные генеративные PRO-модели,
+    исключая специализированные preview-эндпоинты (deep-research, embeddings).
     """
-    # Железобетонный фоллбэк, если API моделей недоступно
-    fallback_models = ["gemini-1.5-pro-latest", "gemini-1.5-pro", "gemini-pro"]
+    priority_models = [
+        "gemini-2.5-pro",
+        "gemini-1.5-pro-latest",
+        "gemini-1.5-pro",
+        "gemini-2.0-pro-exp-02-05",
+        "gemini-2.5-flash",
+        "gemini-1.5-flash"
+    ]
+    
+    excluded_keywords = ["deep-research", "embed", "imagen", "aqa", "robotics", "whisper", "tts"]
     
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
         res = requests.get(url, timeout=10)
         
         if res.status_code == 200:
-            # Получаем все модели, поддерживающие генерацию текста
-            available = [m.get('name', '').replace('models/', '') for m in res.json().get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
+            models_data = res.json().get('models', [])
+            available_clean = []
             
-            # Оставляем СТРОГО Pro модели. Убираем экспериментальные (exp), Flash и Lite.
-            pro_models = [m for m in available if 'pro' in m.lower() and 'exp' not in m.lower() and 'flash' not in m.lower()]
+            for m in models_data:
+                name = m.get('name', '').replace('models/', '')
+                methods = m.get('supportedGenerationMethods', [])
+                
+                # Только модели с поддержкой стандартного generateContent
+                if 'generateContent' in methods:
+                    if not any(bad in name.lower() for bad in excluded_keywords):
+                        available_clean.append(name)
             
-            # Сортируем по убыванию (новейшие версии, такие как 1.5, встанут первыми)
-            pro_models.sort(reverse=True)
+            # Собираем приоритетный список доступных Pro-моделей
+            selected = [m for m in priority_models if m in available_clean]
             
-            if pro_models:
-                return pro_models
+            # Добавляем остальные доступные pro, если они есть
+            for m in available_clean:
+                if 'pro' in m.lower() and m not in selected:
+                    selected.append(m)
+                    
+            if selected:
+                return selected
     except Exception:
         pass
         
-    return fallback_models
+    return priority_models
 
 def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
     models_to_try = get_pro_gemini_models(key)
@@ -326,17 +344,21 @@ def analyze_cross_platform_feed(feed_dump, key, nsfw_enabled):
             if resp.status_code == 200:
                 raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
                 json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-                if json_match: return json.loads(json_match.group()), model_name
-                else: return json.loads(raw_text), model_name
+                if json_match: 
+                    return json.loads(json_match.group()), model_name
+                else: 
+                    return json.loads(raw_text), model_name
             else:
-                # Если получаем 404, модель не найдена — просто идём к следующей
-                err_msg = resp.json().get('error', {}).get('message', 'Unknown error')
+                try:
+                    err_msg = resp.json().get('error', {}).get('message', resp.text[:80])
+                except:
+                    err_msg = resp.text[:80]
                 last_err = f"[{model_name}] {resp.status_code}: {err_msg}"
         except Exception as e:
             last_err = f"[{model_name}] {str(e)}"
             continue
 
-    raise RuntimeError(f"Все доступные PRO-модели недоступны. Последняя ошибка: {last_err}")
+    raise RuntimeError(f"Сбой моделей. Последняя ошибка: {last_err}")
 
 def run_full_scan(depth):
     collected_feed = []
@@ -365,7 +387,7 @@ def start_telegram_bot(token):
 
     @bot.message_handler(commands=['scan'])
     def handle_scan(message):
-        bot.reply_to(message, "📡 Запущен глубокий парсинг источников. Это займет до 60 секунд...")
+        bot.reply_to(message, "📡 Запущен глубокий парсинг источников...")
         try:
             (ai_res, model), _ = run_full_scan(depth=2)
             leader = ai_res.get('absolute_leader', {})
@@ -392,8 +414,8 @@ if st.button("🚀 Запустить Ultra-Precision Scan", type="primary", use
         try:
             status_container.write("1. Парсинг RSS-лент Reddit для обхода блокировок...")
             status_container.write("2. Сканирование Bilibili с эмуляцией заголовков браузера...")
-            status_container.write("3. Анализ NexusMods и Danbooru (усиленный фильтр от мусора)...")
-            status_container.write("4. Синтез архитектуры мешей и шейдеров через Gemini AI (ожидание ответа до 90 сек)...")
+            status_container.write("3. Анализ NexusMods и Danbooru...")
+            status_container.write("4. Синтез архитектуры мешей и шейдеров через Gemini Pro...")
             
             (ai_results, used_model), raw_feed = run_full_scan(scan_depth)
             
@@ -403,7 +425,7 @@ if st.button("🚀 Запустить Ultra-Precision Scan", type="primary", use
                 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 'scan_done': True
             })
-            status_container.update(label=f"Успешно! (Использована модель: {used_model})", state="complete", expanded=False)
+            status_container.update(label=f"Успешно! (Модель: {used_model})", state="complete", expanded=False)
         except Exception as e:
             status_container.update(label="Ошибка", state="error", expanded=True)
             st.error(e)
@@ -468,5 +490,5 @@ if st.session_state.get('scan_done', False):
 </div>
             """, unsafe_allow_html=True)
 
-    with st.expander("🔍 Посмотреть собранный сырой поток первоисточников (Устранение ошибок)"):
+    with st.expander("🔍 Посмотреть собранный сырой поток первоисточников"):
         st.write(st.session_state.get('raw_feed', []))
