@@ -11,7 +11,7 @@ import threading
 import re
 
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
-st.set_page_config(page_title="🔥 Waifu Art Hype Radar: Social Virality", page_icon="📈", layout="wide")
+st.set_page_config(page_title="🔥 Waifu Art Hype Radar (Audience Builder)", page_icon="📈", layout="wide")
 
 st.markdown("""
 <style>
@@ -31,158 +31,146 @@ gemini_key = st.secrets.get("GEMINI_API_KEY", "")
 youtube_key = st.secrets.get("YOUTUBE_API_KEY", "")
 tg_bot_token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
 
-st.title("📈 Omni-Channel Art Hype Radar: Social Virality")
-st.markdown("Поиск персонажей, которые прямо сейчас разрывают алгоритмы соцсетей. **Никаких архивов (Booru)** — только живые обсуждения, просмотры и мировые тренды.")
+st.title("📈 Omni-Channel Art Hype Radar: Audience Builder")
+st.markdown("Поиск персонажей для виральных 3D-рендеров. Максимизация лайков, репостов и вовлеченности на 15+ платформах.")
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 with st.sidebar:
     st.header("⚙️ Параметры Сбора")
-    is_16_plus = st.toggle("🔞 Режим 16+ (Spicy / Виральные позы)", value=True)
+    is_16_plus = st.toggle("🔞 Режим 16+ (Spicy / Алгоритмы соцсетей)", value=True)
     scan_depth = st.select_slider(
-        "Глубина сбора соцсетей (логов):",
-        options=[1000, 3000, 5000],
-        value=3000,
-        help="Количество страниц для парсинга Reddit, Bilibili, Bluesky и YouTube."
+        "Глубина сбора соцсетей (влияет на кол-во логов):",
+        options=[1, 3, 5, 8],
+        value=5,
+        help="Множитель страниц пагинации. Значение 5 собирает до 3000-5000 живых обсуждений."
     )
     st.divider()
     st.header("📡 Источники (Social Only)")
     st.write(f"⚡ Gemini Flash Core: {'🟢 Активен' if gemini_key else '🔴 Нет ключа'}")
-    st.write("🔍 Reddit Mega-Feeds (Hot, Top 24h, Rising): 🟢")
+    st.write("🔍 Reddit Deep JSON (Gacha + AAA): 🟢")
     st.write("📺 YouTube Hype (Трейлеры, Реакции): 🟢")
-    st.write("📺 Bilibili (Азиатские тренды): 🟢")
     st.write("🦋 Bluesky Art Community: 🟢")
     st.write("📰 Gaming Media RSS: 🟢")
 
 # ==========================================
-# МНОГОПОТОЧНЫЕ СКРЕЙПЕРЫ СОЦСЕТЕЙ И ОБСУЖДЕНИЙ
+# МНОГОПОТОЧНЫЕ СКРЕЙПЕРЫ СОЦСЕТЕЙ (С ПАГИНАЦИЕЙ)
 # ==========================================
 
-def fetch_reddit_social_hype(depth_multiplier):
-    """Сбор массивного потока обсуждений с Reddit (Top 24h, Hot, Rising)"""
-    # Разбиваем сабреддиты на смысловые кластеры для обхода лимитов
-    clusters = [
-        "Genshin_Impact+HonkaiStarRail+ZenlessZoneZero+WutheringWaves",
-        "Genshin_Impact_Leaks+HonkaiStarRail_Leaks+Zenlesszonezero_leaks_+WutheringWavesLeaks",
-        "NikkeMobile+BlueArchive+Snowbreak+gachagaming+FateGrandOrder+AzurLane",
-        "gaming+games+pcgaming+ps5+NintendoSwitch",
-        "cyberpunkgame+ResidentEvil+StellarBlade+FinalFantasy+Tekken+StreetFighter+BaldursGate3+MonsterHunter"
+def fetch_reddit_deep_json(depth_mult):
+    """Сбор тысяч логов с Reddit через JSON пагинацию (обходит блокировки RSS)"""
+    subs = [
+        "Genshin_Impact_Leaks", "HonkaiStarRail_Leaks", "Zenlesszonezero_leaks_",
+        "WutheringWavesLeaks", "NikkeMobile", "BlueArchive", "gachagaming",
+        "gaming", "StellarBlade", "cyberpunkgame", "ResidentEvil"
     ]
-    feeds = ["top/.rss?t=day", "hot/.rss", "rising/.rss"]
     results = []
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
     
-    # Ограничиваем количество комбинаций в зависимости от ползунка
-    max_requests = 3 * depth_multiplier 
-    requests_done = 0
-
-    for cluster in clusters:
-        for feed in feeds:
-            if requests_done >= max_requests: break
+    for sub in subs:
+        after = None
+        for _ in range(depth_mult): # Пагинация: сколько страниц пролистать
+            url = f"https://www.reddit.com/r/{sub}/hot.json?limit=100"
+            if after: url += f"&after={after}"
             try:
-                url = f"https://www.reddit.com/r/{cluster}/{feed}?limit=100"
                 res = requests.get(url, headers=headers, timeout=10)
                 if res.status_code == 200:
-                    for entry in feedparser.parse(res.content).entries:
-                        # Захватываем темы с обсуждением артов, косплея, новостей
-                        if any(kw in entry.title.lower() for kw in ['art', 'cosplay', 'leak', 'drip', 'trailer', 'character', 'design', 'skin', 'mod', 'waifu', 'boss']):
-                            results.append(f"[Reddit {feed.split('/')[0].upper()} Hype]: {entry.title}")
-                requests_done += 1
-                time.sleep(0.5)
-            except Exception:
-                continue
+                    data = res.json().get('data', {})
+                    after = data.get('after')
+                    for child in data.get('children', []):
+                        post = child.get('data', {})
+                        title = post.get('title', '')
+                        ups = post.get('ups', 0)
+                        # Захватываем темы с обсуждением (минимум 20 лайков)
+                        if ups > 20: 
+                            results.append(f"[Reddit r/{sub} (👍{ups})]: {title}")
+                    if not after: break # Если следующей страницы нет
+                else:
+                    results.append(f"[Reddit Error r/{sub}]: Code {res.status_code}")
+                    break
+            except Exception as e:
+                results.append(f"[Reddit Exception r/{sub}]: {str(e)}")
+                break
+            time.sleep(0.5) # Пауза между страницами
     return results
 
-def fetch_bluesky_viral_art(depth_multiplier):
-    """Глубокий поиск по Bluesky: что прямо сейчас лайкают и репостят художники"""
+def fetch_bluesky_paginated(depth_mult):
+    """Глубокий поиск по Bluesky: что прямо сейчас лайкают художники"""
     queries = [
-        "fanart", "character teaser", "drip marketing", "wip art", 
-        "genshin fanart", "hsr fanart", "zzz fanart", "wuwa fanart", 
-        "nikke", "stellar blade", "resident evil mod", "cyberpunk lucy", 
-        "tifa fanart", "2b nier", "anime girl render"
+        "waifu fanart", "character teaser", "drip marketing", 
+        "genshin render", "hsr fanart", "zzz fanart", "wuwa fanart", 
+        "nikke fanart", "stellar blade", "resident evil mod", "cyberpunk lucy", 
+        "tifa fanart", "2b nier", "anime girl 3d"
     ]
     results = []
-    limit_per_query = 20 * depth_multiplier
     
     for q in queries:
-        try:
-            # Bluesky API позволяет искать по ключевым словам
-            res = requests.get(f"https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q={q}&limit={limit_per_query}", timeout=8)
-            if res.status_code == 200:
-                for p in res.json().get('posts', []):
-                    text = p.get('record', {}).get('text', '').replace('\n', ' ')[:150]
-                    likes = p.get('likeCount', 0)
-                    reposts = p.get('repostCount', 0)
-                    # Берем только то, что уже начало вируситься (хотя бы 1 лайк/репост)
-                    if likes > 0 or reposts > 0:
-                        results.append(f"[Bluesky Social (❤️{likes} 🔁{reposts})]: {text}")
-        except Exception:
-            pass
+        cursor = None
+        for _ in range(max(1, int(depth_mult/2))):
+            url = f"https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q={q}&limit=50"
+            if cursor: url += f"&cursor={cursor}"
+            try:
+                res = requests.get(url, timeout=8)
+                if res.status_code == 200:
+                    data = res.json()
+                    cursor = data.get('cursor')
+                    for p in data.get('posts', []):
+                        text = p.get('record', {}).get('text', '').replace('\n', ' ')[:150]
+                        likes = p.get('likeCount', 0)
+                        reposts = p.get('repostCount', 0)
+                        if likes > 0 or reposts > 0:
+                            results.append(f"[Bluesky Social (❤️{likes} 🔁{reposts})]: {text}")
+                    if not cursor: break
+            except Exception as e:
+                results.append(f"[Bluesky Exception]: {str(e)}")
+                break
+            time.sleep(0.3)
     return results
 
-def fetch_youtube_hype(api_key, depth_multiplier):
+def fetch_youtube_paginated(api_key, depth_mult):
     """Сбор трейлеров и реакций с YouTube для оценки просмотров"""
-    if not api_key: return []
+    if not api_key: return ["[YouTube]: Нет ключа API"]
     time_limit = (datetime.utcnow() - timedelta(days=5)).isoformat() + "Z"
     
-    # Расширенные запросы для Ютуба
     queries = [
-        "Genshin Impact character trailer",
-        "Honkai Star Rail trailer",
-        "Zenless Zone Zero demo",
-        "Wuthering Waves resonator",
-        "Nikke animation",
-        "Stellar Blade outfit",
-        "Resident Evil mod showcase",
-        "Upcoming gacha game trailer"
+        "Genshin Impact character trailer", "Honkai Star Rail trailer",
+        "Zenless Zone Zero demo", "Wuthering Waves resonator",
+        "Nikke animation", "Stellar Blade character",
+        "Resident Evil mod showcase", "Upcoming gacha game"
     ]
-    
     results = []
-    max_res = 10 * depth_multiplier
     
     for q in queries:
-        params = {
-            "part": "snippet", "q": q, "type": "video", 
-            "videoCategoryId": "20", "publishedAfter": time_limit, 
-            "maxResults": max_res, "order": "viewCount", "key": api_key
-        }
-        try:
-            res = requests.get("https://www.googleapis.com/youtube/v3/search", params=params, timeout=10)
-            if res.status_code == 200:
-                for item in res.json().get('items', []):
-                    results.append(f"[YouTube Trending]: {item['snippet']['title']}")
-        except Exception:
-            pass
-    return results
-
-def fetch_bilibili_hot_trends():
-    """Сбор горячих поисковых запросов Китая (огромный рынок для гачи)"""
-    url = "https://api.bilibili.com/x/web-interface/ranking/v2?rid=0&type=all"
-    results = []
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-        'Referer': 'https://www.bilibili.com/'
-    }
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code == 200:
-            data = res.json().get('data', {}).get('list', [])[:50] # Берем топ 50
-            for item in data:
-                title = item.get('title', '')
-                desc = item.get('desc', '')
-                # Ищем упоминания игровых франшиз
-                if any(kw in title for kw in ['原神', '星穹铁道', '绝区零', '崩坏', '鸣潮', '明日方舟', '碧蓝航线', 'cosplay', '动画']):
-                    results.append(f"[Bilibili Hot (CN)]: {title} - {desc[:50]}")
-    except Exception:
-        pass
+        pageToken = None
+        for _ in range(max(1, int(depth_mult/2))):
+            params = {
+                "part": "snippet", "q": q, "type": "video", 
+                "videoCategoryId": "20", "publishedAfter": time_limit, 
+                "maxResults": 50, "key": api_key
+            }
+            if pageToken: params["pageToken"] = pageToken
+            try:
+                res = requests.get("https://www.googleapis.com/youtube/v3/search", params=params, timeout=10)
+                if res.status_code == 200:
+                    data = res.json()
+                    pageToken = data.get("nextPageToken")
+                    for item in data.get('items', []):
+                        results.append(f"[YouTube Trending]: {item['snippet']['title']}")
+                    if not pageToken: break
+                else:
+                    results.append(f"[YouTube Error]: Code {res.status_code}")
+                    break
+            except Exception as e:
+                results.append(f"[YouTube Exception]: {str(e)}")
+                break
     return results
 
 def fetch_gaming_news_rss():
-    """Свежие анонсы из СМИ, которые запустят волну фанарта завтра"""
+    """Свежие анонсы из СМИ (задают тренды на завтра)"""
     feeds = [
         "https://www.gematsu.com/feed",
         "https://www.siliconera.com/feed",
         "https://www.ign.com/rss/articles/feed",
-        "https://www.gamespot.com/feeds/mashup/"
+        "https://www.animenewsnetwork.com/all/rss.xml?ann-edition=w"
     ]
     results = []
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -190,7 +178,7 @@ def fetch_gaming_news_rss():
         try:
             res = requests.get(u, headers=headers, timeout=8)
             if res.status_code == 200:
-                for entry in feedparser.parse(res.content).entries[:20]:
+                for entry in feedparser.parse(res.content).entries[:25]:
                     if any(kw in entry.title.lower() for kw in ['announce', 'reveal', 'trailer', 'character', 'dlc', 'update', 'leak']):
                         results.append(f"[Gaming Media Catalyst]: {entry.title}")
         except Exception:
@@ -200,27 +188,25 @@ def fetch_gaming_news_rss():
 # ==========================================
 # ПАКЕТНЫЙ ЗАПУСК ДЛЯ СБОРА ТЫСЯЧ СИГНАЛОВ
 # ==========================================
-def run_massive_social_collection(target_count):
+def run_massive_social_collection(depth_mult):
     feed = []
-    depth_mult = max(1, int(target_count / 1000))
     
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [
-            executor.submit(fetch_reddit_social_hype, depth_mult),
-            executor.submit(fetch_bluesky_viral_art, depth_mult),
-            executor.submit(fetch_youtube_hype, youtube_key, depth_mult),
-            executor.submit(fetch_bilibili_hot_trends),
+            executor.submit(fetch_reddit_deep_json, depth_mult),
+            executor.submit(fetch_bluesky_paginated, depth_mult),
+            executor.submit(fetch_youtube_paginated, youtube_key, depth_mult),
             executor.submit(fetch_gaming_news_rss)
         ]
         for f in as_completed(futures):
             feed.extend(f.result())
             
-    # Чистим слишком короткие логи
+    # Очистка коротких логов
     cleaned = [item for item in feed if len(item) > 10]
     return cleaned
 
 # ==========================================
-# ИИ-АНАЛИЗАТОР (FLASH NEXT-GEN С ТОП-10)
+# ИИ-АНАЛИЗАТОР (FLASH NEXT-GEN С ФОКУСОМ НА АУДИТОРИЮ)
 # ==========================================
 def get_latest_flash_models(api_key):
     fallback = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest"]
@@ -250,14 +236,14 @@ def get_latest_flash_models(api_key):
 def analyze_massive_feed(feed_dump, key, nsfw_enabled):
     models_to_try = get_latest_flash_models(key)
     current_date = datetime.now().strftime("%Y-%m-%d")
-    spicy_instruction = 'В массив "spicy_top" добавь от 6 до 10 ЖЕНСКИХ персонажей, которые прямо сейчас вызывают бурю эмоций, мемов и фанарта из-за откровенного дизайна (купальники, облегающая одежда, формы). Опиши, как это использовать для лайков.' if nsfw_enabled else 'Массив "spicy_top" оставь пустым.'
+    spicy_instruction = 'В массив "spicy_top" добавь от 6 до 10 ЖЕНСКИХ персонажей, которые прямо сейчас вызывают бурю эмоций, обсуждений и мемов из-за откровенного дизайна (формы, облегающая одежда, купальники). Опиши, какой ракурс и освещение в 3D-рендере заставит зрителя поставить лайк.' if nsfw_enabled else 'Массив "spicy_top" оставь пустым.'
 
-    # Защита от переполнения (Flash держит 1M токенов, но лучше не спамить больше 5000 логов за раз)
-    sample_feed = feed_dump[:5000]
+    # Ограничиваем сэмпл, чтобы не превысить лимит токенов, но передаем тысячи логов
+    sample_feed = feed_dump[:6000]
 
     prompt = f"""
     ТЫ — ГЛАВНЫЙ АРТ-ПРОДЮСЕР, АНАЛИТИК ТРЕНДОВ И ЭКСПЕРТ ПО АЛГОРИТМАМ СОЦСЕТЕЙ.
-    Твоя задача — проанализировать огромный массив живых обсуждений, просмотров и новостей ({len(sample_feed)} постов) и сформировать рейтинги ЖЕНСКИХ персонажей видеоигр, фанарт по которым прямо сейчас (сегодня) гарантирует ВЗРЫВНОЙ ОХВАТ, МАССОВЫЕ ЛАЙКИ И НАБОР АУДИТОРИИ на платформах (Twitter/X, Pixiv, Reddit, TikTok, Instagram).
+    Твоя задача — проанализировать огромный массив живых обсуждений, просмотров и новостей ({len(sample_feed)} постов) и сформировать рейтинги ЖЕНСКИХ персонажей видеоигр, качественный 3D-фанарт по которым прямо сейчас гарантирует ВЗРЫВНОЙ ОХВАТ, МАССОВЫЕ ЛАЙКИ И НАБОР АУДИТОРИИ на 15+ платформах (Twitter/X, Pixiv, Reddit, Bluesky, DeviantArt, Instagram).
     Сегодня {current_date}.
 
     ВХОДНЫЕ СИГНАЛЫ (Живые обсуждения Reddit, тренды YouTube, Bluesky, СМИ):
@@ -265,10 +251,10 @@ def analyze_massive_feed(feed_dump, key, nsfw_enabled):
 
     ЖЕЛЕЗНЫЕ ПРАВИЛА:
     1. ИСКЛЮЧИТЕЛЬНО ЖЕНСКИЕ ПЕРСОНАЖИ.
-    2. РОВНО 10 ПЕРСОНАЖЕЙ в "gacha_top" (Genshin, Honkai, ZZZ, WuWa, Nikke, Blue Archive, FGO, Azur Lane, Arknights и др.).
-    3. РОВНО 10 ПЕРСОНАЖЕЙ в "other_games_top" (AAA, PC, консоли, файтинги: Resident Evil, Cyberpunk, Stellar Blade, Final Fantasy, Tekken, SF6, NieR, Baldur's Gate и др.).
-    4. ФОКУС НА АЛГОРИТМЫ (visual_hook): Опиши, какая именно поза, ракурс, деталь наряда или эмоция заставит пользователя остановиться при скроллинге ленты (scroll-stopper). 
-    5. ПРИЧИНА ХАЙПА (reason): Почему аудитория обсуждает её именно сейчас? (Вышел трейлер, слили геймплей, споры о дизайне на Reddit).
+    2. НИКАКИХ ПРОДАЖ И АССЕТОВ: Пользователя не интересует продажа моделек. Цель — хайп, просмотры, удержание аудитории, виральность арта.
+    3. РОВНО 10 ПЕРСОНАЖЕЙ в "gacha_top" (Genshin, Honkai, ZZZ, WuWa, Nikke, Blue Archive, FGO, Azur Lane, Arknights и др.).
+    4. РОВНО 10 ПЕРСОНАЖЕЙ в "other_games_top" (AAA, PC, консоли, файтинги: Resident Evil, Cyberpunk, Stellar Blade, Final Fantasy, Tekken, SF6, NieR и др.).
+    5. ФОКУС НА АЛГОРИТМЫ (visual_hook): Опиши, какая именно динамичная поза, ракурс камеры в Blender, освещение (светотень) или деталь наряда заставит пользователя остановиться при скроллинге ленты (scroll-stopper). 
     {spicy_instruction}
 
     ВЕРНИ ОТВЕТ СТРОГО В JSON:
@@ -277,21 +263,21 @@ def analyze_massive_feed(feed_dump, key, nsfw_enabled):
         "name": "Имя героини",
         "game": "Игра",
         "virality_score": 99,
-        "past_72h_event": "В чем заключается хайп (событие/новость)",
-        "source_signal": "Где это обсуждают",
-        "upcoming_catalyst": "Что будет дальше",
-        "visual_hook": "Scroll-stopper: поза, ракурс, освещение, главная деталь, которая соберет ретвиты",
+        "past_72h_event": "В чем заключается хайп (событие/новость/слив)",
+        "source_signal": "Где это активно обсуждают",
+        "upcoming_catalyst": "Что подогреет хайп дальше",
+        "visual_hook": "Scroll-stopper для 3D-рендера: поза, ракурс камеры, освещение, акцент",
         "why_draw_today": "Почему публикация арта именно сегодня даст максимум подписчиков",
-        "tags": ["fanart", "trending", "art"]
+        "tags": ["fanart", "trending", "3dart"]
       }},
       "spicy_top": [
-        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "analysis": "Причина фансервис-хайпа", "visual_hook": "Специфика пикантного арта для алгоритмов", "source_signal": "Источник", "score": 96, "tags": ["spicy", "bikini"] }}
+        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "analysis": "Причина фансервис-хайпа", "visual_hook": "Специфика пикантного 3D-рендера для алгоритмов", "source_signal": "Источник", "score": 96, "tags": ["spicy", "nsfw"] }}
       ],
       "gacha_top": [
-        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "score": 98, "reach": 97, "likes": 98, "visual_hook": "Поза / ракурс / деталь, цепляющая глаз", "source_signal": "Источник хайпа", "reason": "Новый скин/Слив/Сюжет", "trend": "🔥" }}
+        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "score": 98, "reach": 97, "likes": 98, "visual_hook": "Поза / ракурс / свет, цепляющие глаз", "source_signal": "Источник хайпа", "reason": "Новый скин/Слив/Сюжет", "trend": "🔥" }}
       ],
       "other_games_top": [
-        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "score": 97, "reach": 95, "likes": 96, "visual_hook": "Поза / ракурс / деталь, цепляющая глаз", "source_signal": "Источник хайпа", "reason": "Анонс/Мод/Скандал", "trend": "⚔️" }}
+        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "score": 97, "reach": 95, "likes": 96, "visual_hook": "Поза / ракурс / свет, цепляющие глаз", "source_signal": "Источник хайпа", "reason": "Анонс/Мод/Хайп", "trend": "⚔️" }}
       ]
     }}
     """
@@ -332,13 +318,13 @@ def start_telegram_bot(token):
 
     @bot.message_handler(commands=['scan'])
     def handle_scan(message):
-        bot.reply_to(message, "📈 Сканирую алгоритмы соцсетей, обсуждения Reddit и тренды YouTube...")
+        bot.reply_to(message, "📈 Сканирую тысячи обсуждений Reddit, Bluesky и YouTube...")
         try:
-            raw_feed = run_massive_social_collection(3000)
+            raw_feed = run_massive_social_collection(3)
             ai_res, model = analyze_massive_feed(raw_feed, gemini_key, is_16_plus)
             leader = ai_res.get('absolute_leader', {})
             msg = f"👑 *ТОП ДЛЯ ВИРУСНОГО ФАНАРТА:*\n*{leader.get('name', 'N/A')}* ({leader.get('game', 'N/A')})\n"
-            msg += f"🎯 *Хук для соцсетей:* {leader.get('visual_hook', 'N/A')}\n"
+            msg += f"🎯 *Хук (Ракурс/Свет):* {leader.get('visual_hook', 'N/A')}\n"
             msg += f"📌 *Причина хайпа:* {leader.get('past_72h_event', 'N/A')}\n"
             bot.send_message(message.chat.id, msg, parse_mode="Markdown")
         except Exception as e:
@@ -352,18 +338,18 @@ start_telegram_bot(tg_bot_token)
 # ==========================================
 # ИНТЕРФЕЙС STREAMLIT
 # ==========================================
-if st.button(f"🚀 Запустить глубокий Social-Scan ({scan_depth} логов)", type="primary", use_container_width=True):
+if st.button(f"🚀 Запустить глубокий Social-Scan (Глубина: {scan_depth})", type="primary", use_container_width=True):
     if not gemini_key:
         st.error("⚠️ Добавьте GEMINI_API_KEY в Secrets.")
     else:
-        status_container = st.status(f"📡 Массовый парсинг обсуждений и просмотров ({scan_depth} сигналов)...", expanded=True)
+        status_container = st.status(f"📡 Массовый парсинг обсуждений через JSON Pagination...", expanded=True)
         try:
-            status_container.write("1. Сканируем сотни сабреддитов (Top 24h, Hot, Rising) на предмет бурных обсуждений...")
-            status_container.write("2. Проверяем YouTube трейлеры и китайские тренды Bilibili...")
-            status_container.write("3. Анализируем арт-комьюнити в Bluesky (лайки и репосты)...")
+            status_container.write("1. Многостраничный сбор сотен сабреддитов (Top, Hot) на предмет живых обсуждений...")
+            status_container.write("2. Проверяем YouTube трейлеры через nextPageToken...")
+            status_container.write("3. Анализируем арт-комьюнити Bluesky (лайки и репосты)...")
             raw_feed = run_massive_social_collection(scan_depth)
             
-            status_container.write(f"4. Синтез {len(raw_feed)} логов через Gemini Flash Core для поиска максимального хайпа...")
+            status_container.write(f"4. Синтез {len(raw_feed)} логов через Gemini Flash Core для подбора визуальных хуков (свет, ракурс)...")
             ai_results, used_model = analyze_massive_feed(raw_feed, gemini_key, is_16_plus)
             
             st.session_state.update({
@@ -372,7 +358,7 @@ if st.button(f"🚀 Запустить глубокий Social-Scan ({scan_depth
                 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 'scan_done': True
             })
-            status_container.update(label=f"Анализ завершен! Собрано {len(raw_feed)} чистых логов из соцсетей. Модель: {used_model}", state="complete", expanded=False)
+            status_container.update(label=f"Анализ завершен! Собрано {len(raw_feed)} живых логов из соцсетей. Модель: {used_model}", state="complete", expanded=False)
         except Exception as e:
             status_container.update(label="Ошибка анализа", state="error", expanded=True)
             st.error(e)
@@ -387,10 +373,10 @@ if st.session_state.get('scan_done', False):
         tags_html = " ".join([f"<span class='badge'>#{t}</span>" for t in leader.get('tags', [])])
         st.markdown(f"""
 <div class="hero-card">
-<div style="text-transform: uppercase; letter-spacing: 2px; font-size: 12px; margin-bottom: 6px; color: #fbbf24;">👑 Максимальный виральный потенциал (Рисовать прямо сейчас)</div>
+<div style="text-transform: uppercase; letter-spacing: 2px; font-size: 12px; margin-bottom: 6px; color: #fbbf24;">👑 Максимальный виральный потенциал (Рендерить прямо сейчас)</div>
 <div class="hero-title">{leader.get('name', 'Нет данных')} <span style="font-size:20px; font-weight:400; opacity:0.85; color:#cbd5e1;">— {leader.get('game', 'Нет данных')}</span></div>
 <div style="font-size: 15px; margin: 4px 0 10px 0;">Индекс виральности: <b>{leader.get('virality_score', 0)}/100</b></div>
-<div class="fact-box">🎯 <b>Хук для алгоритмов (поза / ракурс / деталь):</b> {leader.get('visual_hook', 'Особые детали')}</div>
+<div class="fact-box">🎯 <b>Хук для 3D-рендера (свет / поза / ракурс):</b> {leader.get('visual_hook', 'Особые детали')}</div>
 <div class="fact-box">📡 <b>В чем суть хайпа:</b> {leader.get('past_72h_event', 'Отсутствует')} ({leader.get('source_signal', 'Сигнал')})</div>
 <div class="catalyst-box">💡 <b>Зачем публиковать сегодня:</b> {leader.get('why_draw_today', 'Пик внимания к персонажу')}</div>
 <div style="margin-top: 14px;">{tags_html}</div>
@@ -426,7 +412,7 @@ if st.session_state.get('scan_done', False):
 <div class="metric-card">
 <h4 style="margin-bottom: 4px;">{m_icon} {item.get('name', '')} <span style="font-size:13px; color:#888;">({item.get('game', '')})</span> — {item.get('score', 0)}/100</h4>
 <p style="font-size: 13px; color: #cbd5e1; margin-bottom: 4px;"><b>Повод:</b> {item.get('reason', '')}</p>
-<p style="font-size: 12px; color: #38bdf8; margin: 0;">🎯 <b>Хук для соцсетей:</b> {item.get('visual_hook', '')}</p>
+<p style="font-size: 12px; color: #38bdf8; margin: 0;">🎯 <b>Хук для 3D:</b> {item.get('visual_hook', '')}</p>
 </div>
             """, unsafe_allow_html=True)
 
@@ -438,7 +424,7 @@ if st.session_state.get('scan_done', False):
 <div class="metric-card">
 <h4 style="margin-bottom: 4px;">{m_icon} {item.get('name', '')} <span style="font-size:13px; color:#888;">({item.get('game', '')})</span> — {item.get('score', 0)}/100</h4>
 <p style="font-size: 13px; color: #cbd5e1; margin-bottom: 4px;"><b>Повод:</b> {item.get('reason', '')}</p>
-<p style="font-size: 12px; color: #f59e0b; margin: 0;">🎯 <b>Хук для соцсетей:</b> {item.get('visual_hook', '')}</p>
+<p style="font-size: 12px; color: #f59e0b; margin: 0;">🎯 <b>Хук для 3D:</b> {item.get('visual_hook', '')}</p>
 </div>
             """, unsafe_allow_html=True)
 
