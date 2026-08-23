@@ -39,7 +39,7 @@ steam_key = st.secrets.get("STEAM_API_KEY", "")
 twitch_id = st.secrets.get("TWITCH_CLIENT_ID", "")
 twitch_secret = st.secrets.get("TWITCH_CLIENT_SECRET", "")
 tg_bot_token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
-nexus_key = st.secrets.get("NEXUSMODS_API_KEY", "") # НОВЫЙ КЛЮЧ
+nexus_key = st.secrets.get("NEXUSMODS_API_KEY", "")
 
 st.title("🔥 Omni-Channel Art Hype Radar: Velocity Edition")
 st.markdown("Предиктивный радар виральности женских персонажей. Оптимизирован под мультиплатформенную публикацию 3D-ассетов.")
@@ -67,7 +67,6 @@ with st.sidebar:
 @st.cache_data(ttl=3600)
 def get_dynamic_trending_games():
     games = ["Genshin", "Honkai", "Zenless", "Wuthering", "Nikke", "Snowbreak", "Resident Evil", "Cyberpunk", "Stellar Blade", "Final Fantasy"]
-    # Парсим Twitch если есть ключи
     if twitch_id and twitch_secret:
         try:
             token_url = f"https://id.twitch.tv/oauth2/token?client_id={twitch_id}&client_secret={twitch_secret}&grant_type=client_credentials"
@@ -86,9 +85,7 @@ def get_dynamic_trending_games():
 # ==========================================
 # СБОР ДАННЫХ ИЗ ПЕРВОИСТОЧНИКОВ
 # ==========================================
-
 def fetch_danbooru_velocity():
-    """Сбор по метрике ускорения (Velocity) за последние 24 часа"""
     url = "https://danbooru.donmai.us/posts.json?limit=200&tags=age:<24h+1girl"
     results = []
     char_counts = Counter()
@@ -97,12 +94,11 @@ def fetch_danbooru_velocity():
         if res.status_code == 200:
             for post in res.json():
                 chars = post.get('tag_string_character', '').split()
-                # Считаем частоту появления персонажа за последние 24 часа
                 for char in chars:
                     if char and char not in ["original", "unknown", "comic"]:
                         char_counts[char] += 1
             for char, count in char_counts.most_common(20):
-                if count > 2: # Минимум 3 арта за 24ч
+                if count > 2: 
                     clean_name = char.replace('_', ' ').title()
                     results.append(f"[Danbooru 24h Velocity]: {clean_name} (Свежих артов: {count})")
     except Exception:
@@ -110,7 +106,6 @@ def fetch_danbooru_velocity():
     return results
 
 def fetch_pixiv_daily_rss():
-    # Рекомендуется заменить rsshub.app на свой self-hosted инстанс для стабильности
     url = "https://rsshub.app/pixiv/ranking/day"
     results = []
     try:
@@ -122,7 +117,6 @@ def fetch_pixiv_daily_rss():
     return results
 
 def fetch_reddit_velocity():
-    """Сбор Reddit через Hot/Rising с расчетом Velocity (Upvotes per Hour)"""
     subs = [
         "Genshin_Impact_Leaks", "HonkaiStarRail_Leaks", "Zenlesszonezero_leaks_", 
         "WutheringWavesLeaks", "NikkeMobile", "BlueArchive", "Snowbreak", "gaming"
@@ -133,7 +127,6 @@ def fetch_reddit_velocity():
     
     for sub in subs:
         try:
-            # Используем rising/hot для перехвата тренда на взлете
             res = requests.get(f"https://www.reddit.com/r/{sub}/hot.json?limit=15", headers=headers, timeout=4)
             if res.status_code == 200:
                 for p in res.json().get('data', {}).get('children', []):
@@ -152,7 +145,6 @@ def fetch_reddit_velocity():
     return results
 
 def fetch_bilibili_hot():
-    """Азиатский первоисточник трендов"""
     url = "https://api.bilibili.com/x/web-interface/ranking/v2?rid=0&type=all"
     results = []
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -162,7 +154,6 @@ def fetch_bilibili_hot():
             data = res.json().get('data', {}).get('list', [])[:15]
             for item in data:
                 title = item.get('title', '')
-                # Фильтруем игровой контент по ключевикам
                 if any(kw in title for kw in ['原神', '星穹铁道', '绝区零', '崩坏', '鸣潮']):
                     results.append(f"[Bilibili Hot Trend]: {title}")
     except:
@@ -170,7 +161,6 @@ def fetch_bilibili_hot():
     return results
 
 def fetch_nexusmods_trending(api_key):
-    """Анализ Spicy-модов и реплейсеров"""
     if not api_key: return []
     games = ["cyberpunk2077", "residentevil42023", "baldursgate3", "monsterhunterworld", "streetfighter6"]
     results = []
@@ -190,7 +180,7 @@ def fetch_youtube_targeted(api_key):
     if not api_key: return []
     time_limit = (datetime.utcnow() - timedelta(days=2)).isoformat() + "Z"
     dynamic_games = get_dynamic_trending_games()
-    query_str = " OR ".join(dynamic_games[:6]) # Берем топ-6 игр для запроса
+    query_str = " OR ".join(dynamic_games[:6]) 
     
     params = {
         "part": "snippet",
@@ -230,7 +220,6 @@ def fetch_bluesky_art():
 # ==========================================
 # ИИ-АНАЛИЗАТОР 
 # ==========================================
-
 def get_pro_gemini_models(api_key):
     pro_models = []
     flash_models = []
@@ -362,13 +351,10 @@ def start_telegram_bot(token):
         try:
             (ai_res, model), _ = run_full_scan()
             leader = ai_res.get('absolute_leader', {})
-            msg = f"👑 *ТОП ЖЕНСКИЙ ПЕРСОНАЖ:*
-*{leader.get('name', 'N/A')}* ({leader.get('game', 'N/A')})
-"
-            msg += f"🎯 *Визуальный хук (3D):* {leader.get('visual_hook', 'N/A')}
-"
-            msg += f"📌 *Инфоповод:* {leader.get('past_72h_event', 'N/A')}
-"
+            # ИСПРАВЛЕННЫЙ БЛОК: Заменены прямые переносы строк на \n 
+            msg = f"👑 *ТОП ЖЕНСКИЙ ПЕРСОНАЖ:*\n*{leader.get('name', 'N/A')}* ({leader.get('game', 'N/A')})\n"
+            msg += f"🎯 *Визуальный хук (3D):* {leader.get('visual_hook', 'N/A')}\n"
+            msg += f"📌 *Инфоповод:* {leader.get('past_72h_event', 'N/A')}\n"
             bot.send_message(message.chat.id, msg, parse_mode="Markdown")
         except Exception as e:
             bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)}")
