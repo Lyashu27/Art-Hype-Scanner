@@ -170,7 +170,7 @@ def run_all_sources():
             executor.submit(fetch_reddit_via_google_gateway),
             executor.submit(fetch_bluesky_stable),
             executor.submit(fetch_youtube_stable, youtube_key),
-            executor.submit(fetch_bilibili_hot),
+            executor.submit(fetch_bilibili_stable),
             executor.submit(fetch_gaming_media)
         ]
         for f in as_completed(futures):
