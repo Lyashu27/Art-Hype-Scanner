@@ -52,39 +52,35 @@ with st.sidebar:
 # ==========================================
 
 def fetch_reddit_stable():
-    """Сбор горячих тем Reddit с авто-переключением на RSS Gateway при блокировках"""
+    """Сбор топовых тем Reddit через нативный RSS (обход блокировки JSON API)"""
     subs = [
         "Genshin_Impact_Leaks", "HonkaiStarRail_Leaks", "Zenlesszonezero_leaks_",
         "WutheringWavesLeaks", "NikkeMobile", "BlueArchive", "gachagaming",
         "StellarBlade", "cyberpunkgame", "ResidentEvil"
     ]
     results = []
-    headers = {'User-Agent': 'WaifuHypeBot/2.0 (Trend Research Tool)'}
+    # Имитируем обычный браузер Mac, чтобы не попасть под фильтр ботов
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15'
+    }
     
     for sub in subs:
-        url = f"https://www.reddit.com/r/{sub}/hot.json?limit=10"
+        # Берем TOP за неделю через RSS, а не HOT, чтобы гарантированно брать виральный контент
+        url = f"https://www.reddit.com/r/{sub}/top.rss?t=week"
         try:
-            res = requests.get(url, headers=headers, timeout=5)
+            res = requests.get(url, headers=headers, timeout=6)
             if res.status_code == 200:
-                posts = res.json().get('data', {}).get('children', [])
-                for p in posts:
-                    data = p.get('data', {})
-                    if not data.get('stickied'):
-                        title = data.get('title', '')
-                        ups = data.get('ups', 0)
-                        results.append(f"[Reddit r/{sub} (🔥{ups})]: {title}")
-            else:
-                fallback_url = f"https://news.google.com/rss/search?q=site:reddit.com/r/{sub}+when:3d&hl=en-US&gl=US&ceid=US:en"
-                fb_res = requests.get(fallback_url, timeout=5)
-                if fb_res.status_code == 200:
-                    feed = feedparser.parse(fb_res.content)
-                    for entry in feed.entries[:5]:
-                        clean_title = entry.title.split(" - ")[0]
-                        results.append(f"[Reddit r/{sub}]: {clean_title}")
+                feed = feedparser.parse(res.content)
+                # Берем 4 самых залайканных поста за неделю из каждого сабреддита
+                for entry in feed.entries[:4]:
+                    clean_title = entry.title
+                    results.append(f"[Reddit r/{sub} Viral]: {clean_title}")
         except Exception:
-            continue
-        time.sleep(0.1)
-    return results[:50]
+            pass
+        # Обязательная пауза, чтобы Reddit не забанил по частоте запросов
+        time.sleep(0.8)
+        
+    return results[:40]
 
 
 def fetch_bluesky_stable():
