@@ -40,134 +40,155 @@ with st.sidebar:
     is_16_plus = st.toggle("🔞 Режим 16+ (Spicy / Виральные позы)", value=True)
     st.divider()
     st.header("📡 Состояние Каналов")
-    st.write(f"⚡ Gemini Flash: {'🟢 Активен' if gemini_key else '🔴 Нет ключа'}")
+    st.write(f"⚡ Gemini Engine (Pro/Flash): {'🟢 Активен' if gemini_key else '🔴 Нет ключа'}")
     st.write(f"📺 YouTube API: {'🟢 Активен' if youtube_key else '⚪ Выключен'}")
-    st.write("🔍 Reddit (Google Gateway): 🟢 Активен")
-    st.write("🦋 Bluesky Social Hub: 🟢 Активен")
+    st.write("🔍 Reddit Hub: 🟢 Активен")
+    st.write("🦋 Bluesky Social: 🟢 Активен")
     st.write("📺 Bilibili Trends: 🟢 Активен")
     st.write("📰 Gaming Media Feeds: 🟢 Активен")
 
 # ==========================================
-# ИСПРАВЛЕННЫЕ СТАБИЛЬНЫЕ ПАРСЕРЫ
+# СТАБИЛЬНЫЕ И СБАЛАНСИРОВАННЫЕ ПАРСЕРЫ
 # ==========================================
 
-def fetch_reddit_via_google_gateway():
-    """Сбор тем Reddit через Google Indexer (100% обход ошибки 403)"""
+def fetch_reddit_stable():
+    """Сбор горячих тем Reddit с авто-переключением на RSS Gateway при блокировках"""
     subs = [
         "Genshin_Impact_Leaks", "HonkaiStarRail_Leaks", "Zenlesszonezero_leaks_",
         "WutheringWavesLeaks", "NikkeMobile", "BlueArchive", "gachagaming",
-        "StellarBlade", "cyberpunkgame", "ResidentEvil", "gaming"
+        "StellarBlade", "cyberpunkgame", "ResidentEvil"
+    ]
+    results = []
+    headers = {'User-Agent': 'WaifuHypeBot/2.0 (Trend Research Tool)'}
+    
+    for sub in subs:
+        url = f"https://www.reddit.com/r/{sub}/hot.json?limit=10"
+        try:
+            res = requests.get(url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                posts = res.json().get('data', {}).get('children', [])
+                for p in posts:
+                    data = p.get('data', {})
+                    if not data.get('stickied'):
+                        title = data.get('title', '')
+                        ups = data.get('ups', 0)
+                        results.append(f"[Reddit r/{sub} (🔥{ups})]: {title}")
+            else:
+                fallback_url = f"https://news.google.com/rss/search?q=site:reddit.com/r/{sub}+when:3d&hl=en-US&gl=US&ceid=US:en"
+                fb_res = requests.get(fallback_url, timeout=5)
+                if fb_res.status_code == 200:
+                    feed = feedparser.parse(fb_res.content)
+                    for entry in feed.entries[:5]:
+                        clean_title = entry.title.split(" - ")[0]
+                        results.append(f"[Reddit r/{sub}]: {clean_title}")
+        except Exception:
+            continue
+        time.sleep(0.1)
+    return results[:50]
+
+
+def fetch_bluesky_stable():
+    """Сбор трендов Bluesky с корректным URL-encoding"""
+    queries = [
+        "fanart", "character teaser", "drip marketing", 
+        "genshin fanart", "hsr fanart", "zzz fanart", "wuwa fanart", 
+        "nikke fanart", "stellar blade", "resident evil mod", "tifa fanart"
     ]
     results = []
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    
-    for sub in subs:
-        url = f"https://news.google.com/rss/search?q=site:reddit.com/r/{sub}+when:4d&hl=en-US&gl=US&ceid=US:en"
-        try:
-            res = requests.get(url, headers=headers, timeout=8)
-            if res.status_code == 200:
-                feed = feedparser.parse(res.content)
-                for entry in feed.entries[:15]:
-                    clean_title = entry.title.split(" - ")[0]
-                    results.append(f"[Reddit r/{sub} Live]: {clean_title}")
-        except Exception:
-            continue
-        time.sleep(0.2)
-    return results
-
-def fetch_bluesky_stable():
-    """Сбор обсуждаемых артов и персонажей из Bluesky"""
-    queries = [
-        "waifu fanart", "character teaser", "drip marketing", 
-        "genshin fanart", "hsr fanart", "zzz fanart", "wuwa fanart", 
-        "nikke fanart", "stellar blade", "resident evil mod", "cyberpunk lucy", 
-        "tifa fanart", "2b nier", "anime girl 3d"
-    ]
-    results = []
     for q in queries:
-        url = f"https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q={q}&limit=20"
         try:
-            res = requests.get(url, timeout=8)
+            res = requests.get(
+                "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts",
+                params={"q": q, "limit": 10},
+                headers=headers,
+                timeout=6
+            )
             if res.status_code == 200:
                 for p in res.json().get('posts', []):
                     text = p.get('record', {}).get('text', '').replace('\n', ' ')[:110]
                     likes = p.get('likeCount', 0)
-                    if likes > 0:
+                    if likes >= 3:
                         results.append(f"[Bluesky (❤️{likes})]: {text}")
         except Exception:
             pass
-        time.sleep(0.2)
-    return results
+        time.sleep(0.1)
+    return results[:40]
+
 
 def fetch_youtube_stable(api_key):
-    """Сбор трейлеров и реакций с YouTube"""
+    """Сбор игровых видео с лимитом (макс. 5 записей на запрос)"""
     if not api_key: return []
-    time_limit = (datetime.utcnow() - timedelta(days=4)).isoformat() + "Z"
+    time_limit = (datetime.utcnow() - timedelta(days=3)).isoformat() + "Z"
     queries = [
-        "Genshin Impact character trailer", "Honkai Star Rail trailer",
+        "Genshin character trailer", "Honkai Star Rail trailer",
         "Zenless Zone Zero demo", "Wuthering Waves resonator",
-        "Nikke animation", "Stellar Blade character",
-        "Resident Evil mod showcase", "Upcoming gacha game"
+        "Nikke animation", "Stellar Blade", "Resident Evil mod"
     ]
     results = []
     for q in queries:
         params = {
             "part": "snippet", "q": q, "type": "video", 
             "videoCategoryId": "20", "publishedAfter": time_limit, 
-            "maxResults": 20, "key": api_key
+            "maxResults": 5, "key": api_key
         }
         try:
-            res = requests.get("https://www.googleapis.com/youtube/v3/search", params=params, timeout=10)
+            res = requests.get("https://www.googleapis.com/youtube/v3/search", params=params, timeout=6)
             if res.status_code == 200:
                 for item in res.json().get('items', []):
                     results.append(f"[YouTube Trending]: {item['snippet']['title']}")
         except Exception:
             pass
-    return results
+    return results[:35]
 
-def fetch_bilibili_stable():
-    """Сбор трендов азиатского рынка"""
-    url = "https://api.bilibili.com/x/web-interface/ranking/v2?rid=0&type=all"
-    results = []
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0',
-        'Referer': 'https://www.bilibili.com/'
-    }
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code == 200:
-            for item in res.json().get('data', {}).get('list', [])[:30]:
-                title = item.get('title', '')
-                if any(kw in title for kw in ['原神', '星穹铁道', '绝区零', '崩坏', '鸣潮', '明日方舟', '碧蓝航线', 'cosplay']):
-                    results.append(f"[Bilibili Hot (CN)]: {title}")
-    except Exception:
-        pass
-    return results
 
 def fetch_gaming_media():
-    """Сбор анонсов из игровых медиа"""
+    """Расширенный сбор анонсов из игровых изданий"""
     feeds = [
         "https://www.gematsu.com/feed",
         "https://www.siliconera.com/feed",
+        "https://automaton-media.com/en/feed/",
+        "https://noisypixel.net/feed/",
+        "https://animecorner.me/feed/",
         "https://www.animenewsnetwork.com/all/rss.xml?ann-edition=w"
     ]
     results = []
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     for u in feeds:
         try:
-            res = requests.get(u, headers=headers, timeout=8)
+            res = requests.get(u, headers=headers, timeout=6)
             if res.status_code == 200:
-                for entry in feedparser.parse(res.content).entries[:15]:
+                for entry in feedparser.parse(res.content).entries[:8]:
                     results.append(f"[Gaming Media]: {entry.title}")
         except Exception:
             continue
-    return results
+    return results[:45]
+
+
+def fetch_bilibili_stable():
+    """Сбор трендов китайского региона по игровой секции"""
+    url = "https://api.bilibili.com/x/web-interface/ranking/v2?rid=4&type=all"
+    results = []
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://www.bilibili.com/'
+    }
+    try:
+        res = requests.get(url, headers=headers, timeout=6)
+        if res.status_code == 200:
+            for item in res.json().get('data', {}).get('list', [])[:20]:
+                title = item.get('title', '')
+                results.append(f"[Bilibili Hot (CN)]: {title}")
+    except Exception:
+        pass
+    return results[:20]
+
 
 def run_all_sources():
     feed = []
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [
-            executor.submit(fetch_reddit_via_google_gateway),
+            executor.submit(fetch_reddit_stable),
             executor.submit(fetch_bluesky_stable),
             executor.submit(fetch_youtube_stable, youtube_key),
             executor.submit(fetch_bilibili_stable),
@@ -180,35 +201,56 @@ def run_all_sources():
     return cleaned
 
 # ==========================================
-# ИИ-АНАЛИЗАТОР (FLASH С ДИНАМИЧЕСКИМ СЕЛЕКТОРОМ)
+# ИИ-АНАЛИЗАТОР (PRO С ФОЛЛБЭКОМ НА FLASH)
 # ==========================================
-def get_working_flash_models(api_key):
-    fallback = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest"]
+def get_prioritized_models(api_key):
+    """
+    Динамический поиск моделей с сортировкой:
+    1. Gemini Pro (по убыванию версии)
+    2. Gemini Flash (по убыванию версии)
+    """
+    fallback_models = [
+        "gemini-2.5-pro", "gemini-2.0-pro", "gemini-1.5-pro-latest", "gemini-1.5-pro",
+        "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"
+    ]
     blacklisted = ["tts", "audio", "image", "imagen", "veo", "banana", "embed", "deep-research", "live", "translate"]
+    
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
         res = requests.get(url, timeout=8)
         if res.status_code == 200:
             models_data = res.json().get('models', [])
-            discovered = []
+            pro_models = []
+            flash_models = []
+            
             for m in models_data:
                 name = m.get('name', '').replace('models/', '')
                 methods = m.get('supportedGenerationMethods', [])
-                if name.startswith('gemini-') and 'flash' in name.lower() and 'generateContent' in methods:
+                
+                if name.startswith('gemini-') and 'generateContent' in methods:
                     if not any(b in name.lower() for b in blacklisted):
-                        discovered.append(name)
+                        if 'pro' in name.lower():
+                            pro_models.append(name)
+                        elif 'flash' in name.lower():
+                            flash_models.append(name)
+            
+            def extract_ver(m_name):
+                match = re.search(r'gemini-(\d+(?:\.\d+)?)', m_name)
+                return float(match.group(1)) if match else 0.0
+
+            pro_models.sort(key=extract_ver, reverse=True)
+            flash_models.sort(key=extract_ver, reverse=True)
+            
+            discovered = pro_models + flash_models
             if discovered:
-                def extract_ver(m_name):
-                    match = re.search(r'gemini-(\d+(?:\.\d+)?)', m_name)
-                    return float(match.group(1)) if match else 0.0
-                discovered.sort(key=extract_ver, reverse=True)
                 return discovered
     except Exception:
         pass
-    return fallback
+    return fallback_models
+
 
 def analyze_hype_feed(feed_dump, key, nsfw_enabled):
-    models_to_try = get_working_flash_models(key)
+    models_to_try = get_prioritized_models(key)
     current_date = datetime.now().strftime("%Y-%m-%d")
     spicy_instruction = 'В массив "spicy_top" добавь от 6 до 10 ЖЕНСКИХ персонажей с вирусным фансервисом (купальники, открытые наряды, пикантные позы). Сделай акцент на визуальных триггерах для набора аудитории.' if nsfw_enabled else 'Массив "spicy_top" оставь пустым.'
 
@@ -218,7 +260,7 @@ def analyze_hype_feed(feed_dump, key, nsfw_enabled):
     Цель пользователя — сделать виральный 3D-фанарт, который соберет МАКСИМУМ ЛАЙКОВ, РЕПОСТОВ И ПОДПИСЧИКОВ на 15+ платформах (Twitter/X, Pixiv, Reddit, Bluesky, DeviantArt, Instagram).
     Сегодня {current_date}.
 
-    ВХОДНЫЕ СИГНАЛЫ (Живые обсуждения Reddit, тренды YouTube, Bluesky, Bilibili, СМИ):
+    ВХОДНЫЕ СИГНАЛЫ (Живые обсуждения Reddit, тренды YouTube, Bluesky, Bilibili, Gaming Media):
     {json.dumps(feed_dump, ensure_ascii=False)}
 
     ЖЕЛЕЗНЫЕ ПРАВИЛА:
@@ -257,14 +299,14 @@ def analyze_hype_feed(feed_dump, key, nsfw_enabled):
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1}
+        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.2}
     }
 
     last_err = ""
     for model_name in models_to_try:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=75)
             if resp.status_code == 200:
                 raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
                 json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
@@ -278,7 +320,7 @@ def analyze_hype_feed(feed_dump, key, nsfw_enabled):
             last_err = f"[{model_name}] {str(e)}"
             continue
 
-    raise RuntimeError(f"Сбой Flash AI: {last_err}")
+    raise RuntimeError(f"Сбой ИИ-моделей: {last_err}")
 
 # ==========================================
 # TELEGRAM БОТ
@@ -290,12 +332,12 @@ def start_telegram_bot(token):
 
     @bot.message_handler(commands=['scan'])
     def handle_scan(message):
-        bot.reply_to(message, "📈 Сканирую тренды и обсуждения (Reddit, YT, Bluesky)...")
+        bot.reply_to(message, "📈 Сканирую тренды (Reddit, Bluesky, YouTube, СМИ, Bilibili)...")
         try:
             raw_feed = run_all_sources()
             ai_res, model = analyze_hype_feed(raw_feed, gemini_key, is_16_plus)
             leader = ai_res.get('absolute_leader', {})
-            msg = f"👑 *ТОП ДЛЯ ВИРУСНОГО 3D-РЕНДЕРА:*\n*{leader.get('name', 'N/A')}* ({leader.get('game', 'N/A')})\n"
+            msg = f"👑 *ТОП ДЛЯ ВИРУСНОГО 3D-РЕНДЕРА ({model}):*\n*{leader.get('name', 'N/A')}* ({leader.get('game', 'N/A')})\n"
             msg += f"🎯 *Хук (Ракурс/Свет):* {leader.get('visual_hook', 'N/A')}\n"
             msg += f"📌 *Причина хайпа:* {leader.get('past_72h_event', 'N/A')}\n"
             bot.send_message(message.chat.id, msg, parse_mode="Markdown")
@@ -310,34 +352,36 @@ start_telegram_bot(tg_bot_token)
 # ==========================================
 # ИНТЕРФЕЙС STREAMLIT
 # ==========================================
-if st.button("🚀 Запустить Hype-Scan (~300–500 сигналов)", type="primary", use_container_width=True):
+if st.button("🚀 Запустить Hype-Scan (Все каналы)", type="primary", use_container_width=True):
     if not gemini_key:
         st.error("⚠️ Добавьте GEMINI_API_KEY в Secrets.")
     else:
-        status_container = st.status("📡 Сбор чистых инфоповодов из соцсетей...", expanded=True)
+        status_container = st.status("📡 Сбор данных по всем каналам...", expanded=True)
         try:
-            status_container.write("1. Парсинг тем Reddit через Google Gateway (без 403 ошибки)...")
-            status_container.write("2. Сканирование YouTube трейлеров и Bilibili трендов...")
-            status_container.write("3. Анализ вирусных артов в Bluesky...")
+            status_container.write("1. Парсинг Reddit Hot & Leaks...")
+            status_container.write("2. Сканирование Bluesky постов...")
+            status_container.write("3. Сбор трейлеров YouTube & Bilibili Gaming...")
+            status_container.write("4. Получение свежих релизов из Gaming Media RSS...")
             raw_feed = run_all_sources()
             
-            status_container.write(f"4. Синтез {len(raw_feed)} чистых логов через Gemini Flash Core...")
+            status_container.write(f"5. Анализ {len(raw_feed)} сбалансированных сигналов через Gemini Pro/Flash...")
             ai_results, used_model = analyze_hype_feed(raw_feed, gemini_key, is_16_plus)
             
             st.session_state.update({
                 'omni_results': ai_results,
                 'raw_feed': raw_feed,
+                'used_model': used_model,
                 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 'scan_done': True
             })
-            status_container.update(label=f"Анализ завершен! Найдено {len(raw_feed)} чистых сигналов. Модель: {used_model}", state="complete", expanded=False)
+            status_container.update(label=f"Анализ завершен! Собрано {len(raw_feed)} сигналов. Модель: {used_model}", state="complete", expanded=False)
         except Exception as e:
             status_container.update(label="Ошибка анализа", state="error", expanded=True)
             st.error(e)
 
 if st.session_state.get('scan_done', False):
     res = st.session_state['omni_results']
-    st.caption(f"⏱️ **Данные собраны:** {st.session_state['timestamp']} | 📊 **Сигналов в базе:** {len(st.session_state.get('raw_feed', []))}")
+    st.caption(f"⏱️ **Данные собраны:** {st.session_state['timestamp']} | 📊 **Сигналов в базе:** {len(st.session_state.get('raw_feed', []))} | 🧠 **Модель:** `{st.session_state.get('used_model', 'N/A')}`")
     
     # 1. АБСОЛЮТНЫЙ ЛИДЕР
     leader = res.get('absolute_leader', {})
@@ -401,5 +445,5 @@ if st.session_state.get('scan_done', False):
             """, unsafe_allow_html=True)
 
     # 4. СЫРОЙ ПОТОК
-    with st.expander(f"🔍 Посмотреть собранный массив живых обсуждений ({len(st.session_state.get('raw_feed', []))} записей)"):
+    with st.expander(f"🔍 Посмотреть собранный массив обсуждений ({len(st.session_state.get('raw_feed', []))} записей)"):
         st.write(st.session_state.get('raw_feed', []))
