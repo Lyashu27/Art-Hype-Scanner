@@ -61,7 +61,6 @@ def fetch_reddit_stable():
     results = []
     
     for idx, sub in enumerate(subs):
-        # API Reddit требует уникальный формат User-Agent, иначе банит облачные IP
         ua = f'python:waifu_radar_app:v2.{idx} (by /u/ArtResearcher)'
         url = f"https://www.reddit.com/r/{sub}/top.json?t=week&limit=5"
         headers = {'User-Agent': ua}
@@ -78,7 +77,6 @@ def fetch_reddit_stable():
                     if title and not post_data.get('stickied'):
                         results.append(f"[Reddit r/{sub} (🔥{ups})]: {title}")
             else:
-                # Если Reddit дал 429 блокировку, идем через публичный прокси RSSHub
                 fallback_url = f"https://rsshub.app/reddit/subreddit/{sub}/top"
                 fb_res = requests.get(fallback_url, timeout=6)
                 if fb_res.status_code == 200:
@@ -87,15 +85,13 @@ def fetch_reddit_stable():
                         results.append(f"[Reddit r/{sub}]: {entry.title}")
         except Exception:
             pass
-        
-        # Увеличенная пауза для охлаждения рейт-лимита Reddit
-        time.sleep(1.5)
+        time.sleep(1.2)
         
     return results[:40]
 
 
 def fetch_bluesky_stable():
-    """Сбор трендов Bluesky (исправлена логика сортировки)"""
+    """Сбор трендов Bluesky с сортировкой по популярности (top)"""
     queries = [
         "fanart", "character teaser", "drip marketing", 
         "genshin fanart", "hsr fanart", "zzz fanart", "wuwa fanart", 
@@ -105,7 +101,6 @@ def fetch_bluesky_stable():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     for q in queries:
         try:
-            # ВАЖНО: добавлен параметр "sort": "top"
             res = requests.get(
                 "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts",
                 params={"q": q, "limit": 20, "sort": "top"},
@@ -116,12 +111,11 @@ def fetch_bluesky_stable():
                 for p in res.json().get('posts', []):
                     text = p.get('record', {}).get('text', '').replace('\n', ' ')[:110]
                     likes = p.get('likeCount', 0)
-                    # Берем посты даже с минимальной реакцией
                     if likes > 0:
                         results.append(f"[Bluesky (❤️{likes})]: {text}")
         except Exception:
             pass
-        time.sleep(0.3)
+        time.sleep(0.2)
     return results[:40]
 
 
