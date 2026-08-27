@@ -28,20 +28,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- ИНИЦИАЛИЗАЦИЯ КЛИЕНТОВ ---
-# Scraper для защиты Cloudflare (СМИ, Bilibili, YouTube)
 scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
-
-# Спец-заголовки для Reddit (защита от теневого бана IP Streamlit)
-REDDIT_HEADERS = {
-    'User-Agent': f'windows:waifu.art.radar:v2.1 (by /u/art_tracker_{random.randint(1000, 99999)})',
-    'Accept': 'application/json'
-}
 
 gemini_key = st.secrets.get("GEMINI_API_KEY", "")
 youtube_key = st.secrets.get("YOUTUBE_API_KEY", "")
 
 st.title("📈 Omni-Channel Art Hype Radar")
-st.markdown("Поиск персонажей для вирального фанарта на основе жестких метрик вовлеченности. Максимизация охватов на всех платформах.")
+st.markdown("Поиск женских персонажей для вирального 3D-фанарта. Максимизация охватов для кросс-постинга.")
 
 with st.sidebar:
     st.header("⚙️ Параметры Сбора")
@@ -56,14 +49,13 @@ with st.sidebar:
 # ==========================================
 
 def fetch_reddit_deep():
-    """Сбор Reddit через RSS (Top 24h) для обхода блокировок IP"""
+    """Сбор Reddit через RSS (Top 24h) - Стабильный обход блокировок"""
     subs = [
         "Genshin_Impact_Leaks", "HonkaiStarRail_Leaks", "Zenlesszonezero_leaks_",
         "WutheringWavesLeaks", "NikkeMobile", "BlueArchive", "StellarBlade"
     ]
     results = []
     exclude_keywords = ["megathread", "daily question", "weekly", "help", "troubleshooting", "maintenance"]
-    
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     
     for sub in subs:
@@ -72,25 +64,20 @@ def fetch_reddit_deep():
             res = requests.get(url, headers=headers, timeout=10)
             if res.status_code == 200:
                 parsed = feedparser.parse(res.content)
-                # Берем только топ-3 самых виральных поста за день с каждого сабреддита
-                for entry in parsed.entries[:3]:
+                for entry in parsed.entries[:4]:
                     title = entry.title
                     if not any(ex in title.lower() for ex in exclude_keywords):
                         results.append(f"[Reddit r/{sub} | 🔥 Top 24h]: {title}")
-        except Exception as e:
+        except Exception:
             pass
         time.sleep(0.5)
-        
     return results
 
 def fetch_bluesky_viral():
-    """Сбор Bluesky с обработкой ошибок Cloud"""
-    queries = [
-        "waifu fanart", "character teaser", "drip marketing", 
-        "genshin fanart", "hsr fanart", "zzz fanart", "nikke fanart"
-    ]
+    """Сбор Bluesky с обработкой rate limits"""
+    queries = ["waifu fanart", "genshin fanart", "hsr fanart", "zzz fanart", "nikke fanart"]
     results = []
-    headers = {'Accept': 'application/json', 'User-Agent': 'WaifuRadar/1.0'}
+    headers = {'Accept': 'application/json', 'User-Agent': f'WaifuRadar/{random.randint(1,100)}.0'}
     
     for q in queries:
         try:
@@ -106,23 +93,17 @@ def fetch_bluesky_viral():
                     record = p.get('record', {})
                     text = record.get('text', '').replace('\n', ' ').strip()
                     likes = p.get('likeCount', 0)
-                    
                     if likes >= 10 and len(text) > 10:
                         results.append(f"[Bluesky | ❤️{likes}]: {text[:100]}")
         except Exception:
-            # Если Bluesky блокирует, мы просто пропускаем без падения всего скрипта
             pass
         time.sleep(0.5)
-        
-    # Сортировка по лайкам
     return sorted(results, key=lambda x: int(re.search(r'❤️(\d+)', x).group(1)) if re.search(r'❤️(\d+)', x) else 0, reverse=True)[:30]
 
 def fetch_bilibili_targeted():
-    """Сбор Bilibili через рейтинги с жестким локальным фильтром по играм"""
-    categories = [119, 17] # Мобильные и синглплеерные игры
+    """Сбор Bilibili с локальной фильтрацией (если API пропустит IP)"""
+    categories = [119, 17]
     results = []
-    
-    # Ключевые слова: PV, Демонстрация, Геймплей, Анонс, Трейлер, Персонаж
     cn_keywords = ["PV", "演示", "实机", "预告", "角色", "动画", "前瞻"] 
     
     for rid in categories:
@@ -134,29 +115,20 @@ def fetch_bilibili_targeted():
                 for item in items:
                     title = item.get('title', '')
                     views = item.get('stat', {}).get('view', 0)
-                    
-                    # Пропускаем, если в названии нет нужных игровых терминов
                     if not any(kw in title for kw in cn_keywords):
                         continue
-                        
                     views_k = f"{views // 1000}k" if views > 1000 else str(views)
                     results.append(f"[Bilibili Hot (CN) | 👁️{views_k}]: {title}")
-                    
-                    if len(results) >= 20: # Ограничиваем сбор
+                    if len(results) >= 20:
                         break
         except Exception:
             pass
         time.sleep(1)
-        
     return results
 
 def fetch_gaming_media_filtered():
     """RSS сбор с фильтрацией новостей"""
-    feeds = [
-        "https://www.gematsu.com/feed",
-        "https://www.siliconera.com/feed",
-        "https://animecorner.me/feed/"
-    ]
+    feeds = ["https://www.gematsu.com/feed", "https://www.siliconera.com/feed", "https://animecorner.me/feed/"]
     results = []
     hype_keywords = ["character", "trailer", "announce", "leak", "reveal", "gameplay", "update"]
     
@@ -213,7 +185,6 @@ def run_all_sources():
 # ДИНАМИЧЕСКИЙ ПОДБОР МОДЕЛЕЙ (PRO -> FLASH)
 # ==========================================
 def get_prioritized_models(api_key):
-    """Автоподбор свежих моделей Gemini"""
     fallback_models = [
         "gemini-2.5-pro", "gemini-2.0-pro-exp-02-05", "gemini-1.5-pro-latest", "gemini-1.5-pro",
         "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"
@@ -225,19 +196,15 @@ def get_prioritized_models(api_key):
         res = scraper.get(url, timeout=8)
         if res.status_code == 200:
             models_data = res.json().get('models', [])
-            pro_models = []
-            flash_models = []
+            pro_models, flash_models = [], []
             
             for m in models_data:
                 name = m.get('name', '').replace('models/', '')
                 methods = m.get('supportedGenerationMethods', [])
-                
                 if name.startswith('gemini-') and 'generateContent' in methods:
                     if not any(b in name.lower() for b in blacklisted):
-                        if 'pro' in name.lower():
-                            pro_models.append(name)
-                        elif 'flash' in name.lower():
-                            flash_models.append(name)
+                        if 'pro' in name.lower(): pro_models.append(name)
+                        elif 'flash' in name.lower(): flash_models.append(name)
             
             def extract_ver(m_name):
                 match = re.search(r'gemini-(\d+(?:\.\d+)?)', m_name)
@@ -247,8 +214,7 @@ def get_prioritized_models(api_key):
             flash_models.sort(key=extract_ver, reverse=True)
             
             discovered = pro_models + flash_models
-            if discovered:
-                return discovered
+            if discovered: return discovered
     except Exception:
         pass
     return fallback_models
@@ -261,16 +227,16 @@ def analyze_hype_feed(feed_dump, key, nsfw_enabled):
     prompt = f"""
     ТЫ — ГЛАВНЫЙ АРТ-ПРОДЮСЕР, АНАЛИТИК ТРЕНДОВ И ЭКСПЕРТ ПО АЛГОРИТМАМ СОЦСЕТЕЙ.
     Сегодня {current_date}.
-    Твоя цель — отобрать инфоповоды для вирального 3D-фанарта женских персонажей, который соберет МАКСИМУМ охватов на 15+ платформах (включая китайские LOFTER, Rednote, а также Twitter, Pixiv, Reddit и др.).
+    Твоя цель — отобрать инфоповоды для вирального 3D-фанарта женских персонажей, который соберет МАКСИМУМ охватов. 
+    Учитывай, что арт будет публиковаться на 15+ платформах, включая мощные азиатские площадки (LOFTER, Rednote), а также западные сети (Reddit, Twitter/X, Pixiv).
 
     ВХОДНЫЕ СИГНАЛЫ (с метриками лайков 👍, комментов 💬 и просмотров 👁️):
     {json.dumps(feed_dump, ensure_ascii=False)}
 
     🔥 ЖЕСТКИЕ ПРАВИЛА (ANTI-HALLUCINATION & GROUNDING):
     1. ИСПОЛЬЗУЙ ТОЛЬКО ДАННЫЕ ИЗ ВХОДНЫХ СИГНАЛОВ. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать персонажей или добавлять кого-то, кого нет в JSON выше.
-    2. ВЕС СИГНАЛА ИМЕЕТ ЗНАЧЕНИЕ: Приоритет отдавай тем персонажам, у которых в источнике стоят максимальные цифры реакций. Учитывай специфику азиатского рынка (Bilibili).
-    3. ТОЛЬКО ЖЕНСКИЕ ПЕРСОНАЖИ.
-    4. ЕСЛИ ДАННЫХ НЕДОСТАТОЧНО: Если во входных сигналах есть только 3 подходящих персонажа — верни ровно 3. НЕ ДОБИВАЙ список выдуманными именами.
+    2. ТОЛЬКО ЖЕНСКИЕ ПЕРСОНАЖИ. Тематика — 3D-фанарт.
+    3. ЕСЛИ ДАННЫХ НЕДОСТАТОЧНО: Если во входных сигналах есть только 3 подходящих персонажа — верни ровно 3. НЕ ДОБИВАЙ список выдуманными именами.
     {spicy_instruction}
 
     ВЕРНИ ОТВЕТ СТРОГО В JSON:
@@ -280,18 +246,18 @@ def analyze_hype_feed(feed_dump, key, nsfw_enabled):
         "game": "Игра",
         "virality_score": 99,
         "past_72h_event": "В чем заключается хайп (анонс/слив/патч)",
-        "source_signal": "Точный источник и его цифры (например: Reddit 👍5400)",
-        "why_draw_today": "Почему публикация арта именно сегодня даст взрывной рост аудитории",
+        "source_signal": "Точный источник (например: Reddit 🔥 Top 24h)",
+        "why_draw_today": "Почему 3D-рендер именно сегодня даст взрывной рост аудитории",
         "tags": ["trending", "waifu", "имяперсонажа"]
       }},
       "spicy_top": [
-        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "analysis": "Причина фансервис-хайпа", "source_signal": "Источник с цифрами", "score": 96, "tags": ["spicy"] }}
+        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "analysis": "Причина фансервис-хайпа", "source_signal": "Источник", "score": 96, "tags": ["spicy"] }}
       ],
       "gacha_top": [
-        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "score": 98, "source_signal": "Источник хайпа с цифрами", "reason": "Причина (Слив/Трейлер)" }}
+        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "score": 98, "source_signal": "Источник хайпа", "reason": "Причина (Слив/Трейлер)" }}
       ],
       "other_games_top": [
-        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "score": 97, "source_signal": "Источник хайпа с цифрами", "reason": "Причина" }}
+        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "score": 97, "source_signal": "Источник хайпа", "reason": "Причина" }}
       ]
     }}
     """
@@ -323,24 +289,24 @@ def analyze_hype_feed(feed_dump, key, nsfw_enabled):
 # ==========================================
 # ИНТЕРФЕЙС STREAMLIT
 # ==========================================
-if st.button("🚀 Запустить Hype-Scan (Жесткий сбор данных)", type="primary", use_container_width=True):
+if st.button("🚀 Запустить Hype-Scan", type="primary", use_container_width=True):
     if not gemini_key:
         st.error("⚠️ Добавьте GEMINI_API_KEY в конфигурацию.")
     else:
         status_container = st.status("📡 Сбор данных по всем каналам...", expanded=True)
         try:
-            status_container.write("1. 🟢 Пробиваем Reddit (requests API + User-Agent)...")
-            status_container.write("2. 🟢 Парсим Bluesky (открытый API)...")
-            status_container.write("3. 🟢 Соединение с Bilibili (поиск по PV/Демо)...")
-            status_container.write("4. 🟢 Сбор RSS Gaming Media...")
+            status_container.write("1. 🟢 Пробиваем Reddit (RSS Top 24h)...")
+            status_container.write("2. 🟢 Парсим Bluesky...")
+            status_container.write("3. 🟢 Соединение с Bilibili...")
+            status_container.write("4. 🟢 Сбор RSS Gaming Media и YouTube...")
             
             raw_feed = run_all_sources()
             
-            if len(raw_feed) < 10:
+            if len(raw_feed) < 5:
                 status_container.update(label="❌ Собрано слишком мало данных. Попробуйте еще раз через минуту.", state="error")
                 st.stop()
                 
-            status_container.write(f"✅ Успешно собрано {len(raw_feed)} качественных сигналов.")
+            status_container.write(f"✅ Успешно собрано {len(raw_feed)} чистых сигналов.")
             status_container.write("🧠 Определение лучшей доступной модели Pro/Flash и анализ...")
             
             ai_results, used_model = analyze_hype_feed(raw_feed, gemini_key, is_16_plus)
