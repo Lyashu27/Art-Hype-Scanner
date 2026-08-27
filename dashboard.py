@@ -56,7 +56,7 @@ with st.sidebar:
 # ==========================================
 
 def fetch_reddit_deep():
-    """Сбор Reddit через requests с правильным User-Agent"""
+    """Сбор Reddit через RSS (Top 24h) для обхода блокировок IP"""
     subs = [
         "Genshin_Impact_Leaks", "HonkaiStarRail_Leaks", "Zenlesszonezero_leaks_",
         "WutheringWavesLeaks", "NikkeMobile", "BlueArchive", "StellarBlade"
@@ -64,41 +64,40 @@ def fetch_reddit_deep():
     results = []
     exclude_keywords = ["megathread", "daily question", "weekly", "help", "troubleshooting", "maintenance"]
     
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    
     for sub in subs:
-        url = f"https://www.reddit.com/r/{sub}/hot.json?limit=40"
+        url = f"https://www.reddit.com/r/{sub}/top.rss?t=day"
         try:
-            res = requests.get(url, headers=REDDIT_HEADERS, timeout=10)
+            res = requests.get(url, headers=headers, timeout=10)
             if res.status_code == 200:
-                posts = res.json().get('data', {}).get('children', [])
-                for p in posts:
-                    data = p['data']
-                    title = data.get('title', '')
-                    score = data.get('score', 0)
-                    comments = data.get('num_comments', 0)
-                    
-                    if score < 120 or any(ex in title.lower() for ex in exclude_keywords):
-                        continue
-                        
-                    results.append(f"[Reddit r/{sub} | 👍{score} | 💬{comments}]: {title}")
-        except Exception:
+                parsed = feedparser.parse(res.content)
+                # Берем только топ-3 самых виральных поста за день с каждого сабреддита
+                for entry in parsed.entries[:3]:
+                    title = entry.title
+                    if not any(ex in title.lower() for ex in exclude_keywords):
+                        results.append(f"[Reddit r/{sub} | 🔥 Top 24h]: {title}")
+        except Exception as e:
             pass
-        time.sleep(random.uniform(0.8, 1.5))
+        time.sleep(0.5)
         
-    return sorted(results, key=lambda x: int(re.search(r'👍(\d+)', x).group(1)) if re.search(r'👍(\d+)', x) else 0, reverse=True)[:60]
+    return results
 
 def fetch_bluesky_viral():
-    """Сбор Bluesky через открытый API"""
+    """Сбор Bluesky с обработкой ошибок Cloud"""
     queries = [
-        "character teaser", "drip marketing", "waifu fanart",
-        "genshin fanart", "hsr fanart", "zzz fanart", "wuwa fanart", "nikke fanart"
+        "waifu fanart", "character teaser", "drip marketing", 
+        "genshin fanart", "hsr fanart", "zzz fanart", "nikke fanart"
     ]
     results = []
+    headers = {'Accept': 'application/json', 'User-Agent': 'WaifuRadar/1.0'}
     
     for q in queries:
         try:
             res = requests.get(
                 "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts",
-                params={"q": q, "limit": 30},
+                params={"q": q, "limit": 20},
+                headers=headers,
                 timeout=10
             )
             if res.status_code == 200:
@@ -109,38 +108,47 @@ def fetch_bluesky_viral():
                     likes = p.get('likeCount', 0)
                     
                     if likes >= 10 and len(text) > 10:
-                        results.append(f"[Bluesky | ❤️{likes}]: {text[:150]}")
+                        results.append(f"[Bluesky | ❤️{likes}]: {text[:100]}")
         except Exception:
+            # Если Bluesky блокирует, мы просто пропускаем без падения всего скрипта
             pass
         time.sleep(0.5)
         
-    return sorted(results, key=lambda x: int(re.search(r'❤️(\d+)', x).group(1)) if re.search(r'❤️(\d+)', x) else 0, reverse=True)[:40]
+    # Сортировка по лайкам
+    return sorted(results, key=lambda x: int(re.search(r'❤️(\d+)', x).group(1)) if re.search(r'❤️(\d+)', x) else 0, reverse=True)[:30]
 
 def fetch_bilibili_targeted():
-    """Сбор Bilibili через поиск по конкретным игровым видео (PV/Анонсы)"""
-    queries = ["角色演示", "PV", "实机演示"] # Демо персонажа, PV, Геймплей
+    """Сбор Bilibili через рейтинги с жестким локальным фильтром по играм"""
+    categories = [119, 17] # Мобильные и синглплеерные игры
     results = []
     
-    for q in queries:
-        encoded_q = urllib.parse.quote(q)
-        # tids=4 ограничивает поиск игровой категорией
-        url = f"https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword={encoded_q}&tids=4&order=pubdate"
+    # Ключевые слова: PV, Демонстрация, Геймплей, Анонс, Трейлер, Персонаж
+    cn_keywords = ["PV", "演示", "实机", "预告", "角色", "动画", "前瞻"] 
+    
+    for rid in categories:
+        url = f"https://api.bilibili.com/x/web-interface/ranking/v2?rid={rid}&type=all"
         try:
             res = scraper.get(url, timeout=10)
             if res.status_code == 200:
-                items = res.json().get('data', {}).get('result', [])[:15]
+                items = res.json().get('data', {}).get('list', [])
                 for item in items:
-                    title = item.get('title', '').replace('<em class="keyword">', '').replace('</em>', '')
-                    views = item.get('play', 0)
-                    views_k = f"{views // 1000}k" if views > 1000 else str(views)
+                    title = item.get('title', '')
+                    views = item.get('stat', {}).get('view', 0)
                     
-                    if views > 5000:
-                        results.append(f"[Bilibili (CN) | 👁️{views_k}]: {title}")
+                    # Пропускаем, если в названии нет нужных игровых терминов
+                    if not any(kw in title for kw in cn_keywords):
+                        continue
+                        
+                    views_k = f"{views // 1000}k" if views > 1000 else str(views)
+                    results.append(f"[Bilibili Hot (CN) | 👁️{views_k}]: {title}")
+                    
+                    if len(results) >= 20: # Ограничиваем сбор
+                        break
         except Exception:
             pass
         time.sleep(1)
         
-    return results[:30]
+    return results
 
 def fetch_gaming_media_filtered():
     """RSS сбор с фильтрацией новостей"""
