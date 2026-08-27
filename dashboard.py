@@ -7,6 +7,9 @@ import feedparser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 import cloudscraper
+import requests
+import random
+import urllib.parse
 
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
 st.set_page_config(page_title="🔥 Waifu Art Hype Radar", page_icon="📈", layout="wide")
@@ -20,12 +23,19 @@ st.markdown("""
     .fact-box {background: rgba(15, 23, 42, 0.7); padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-top: 8px; border-left: 4px solid #38bdf8;}
     .badge {background-color: #1e293b; padding: 3px 8px; border-radius: 6px; font-size: 12px; margin-right: 5px; color: #93c5fd; border: 1px solid #334155; display: inline-block; margin-bottom: 3px;}
     .spicy-badge {background-color: #3b1c28; color: #ff9ebf; border-color: #ff4b8b;}
-    .log-box {background-color: #000; color: #0f0; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 11px; max-height: 200px; overflow-y: auto;}
+    .log-box {background-color: #000; color: #0f0; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 11px; max-height: 250px; overflow-y: auto;}
 </style>
 """, unsafe_allow_html=True)
 
-# Инициализация браузерного клиента для обхода Cloudflare
+# --- ИНИЦИАЛИЗАЦИЯ КЛИЕНТОВ ---
+# Scraper для защиты Cloudflare (СМИ, Bilibili, YouTube)
 scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
+
+# Спец-заголовки для Reddit (защита от теневого бана IP Streamlit)
+REDDIT_HEADERS = {
+    'User-Agent': f'windows:waifu.art.radar:v2.1 (by /u/art_tracker_{random.randint(1000, 99999)})',
+    'Accept': 'application/json'
+}
 
 gemini_key = st.secrets.get("GEMINI_API_KEY", "")
 youtube_key = st.secrets.get("YOUTUBE_API_KEY", "")
@@ -42,15 +52,14 @@ with st.sidebar:
     st.write(f"📺 YouTube API: {'🟢 Активен' if youtube_key else '⚪ Выключен'}")
 
 # ==========================================
-# ПАРСЕРЫ С МЕТРИКАМИ ВОВЛЕЧЕННОСТИ
+# ПАРСЕРЫ С МЕТРИКАМИ И ОБХОДОМ БЛОКИРОВОК
 # ==========================================
 
 def fetch_reddit_deep():
-    """Сбор Reddit с фильтрацией по score"""
+    """Сбор Reddit через requests с правильным User-Agent"""
     subs = [
         "Genshin_Impact_Leaks", "HonkaiStarRail_Leaks", "Zenlesszonezero_leaks_",
-        "WutheringWavesLeaks", "NikkeMobile", "BlueArchive", "gachagaming",
-        "StellarBlade", "cyberpunkgame", "ResidentEvil"
+        "WutheringWavesLeaks", "NikkeMobile", "BlueArchive", "StellarBlade"
     ]
     results = []
     exclude_keywords = ["megathread", "daily question", "weekly", "help", "troubleshooting", "maintenance"]
@@ -58,7 +67,7 @@ def fetch_reddit_deep():
     for sub in subs:
         url = f"https://www.reddit.com/r/{sub}/hot.json?limit=40"
         try:
-            res = scraper.get(url, timeout=10)
+            res = requests.get(url, headers=REDDIT_HEADERS, timeout=10)
             if res.status_code == 200:
                 posts = res.json().get('data', {}).get('children', [])
                 for p in posts:
@@ -73,22 +82,21 @@ def fetch_reddit_deep():
                     results.append(f"[Reddit r/{sub} | 👍{score} | 💬{comments}]: {title}")
         except Exception:
             pass
-        time.sleep(0.3)
+        time.sleep(random.uniform(0.8, 1.5))
         
     return sorted(results, key=lambda x: int(re.search(r'👍(\d+)', x).group(1)) if re.search(r'👍(\d+)', x) else 0, reverse=True)[:60]
 
 def fetch_bluesky_viral():
-    """Сбор Bluesky с фильтрацией по лайкам"""
+    """Сбор Bluesky через открытый API"""
     queries = [
         "character teaser", "drip marketing", "waifu fanart",
-        "genshin fanart", "hsr fanart", "zzz fanart", "wuwa fanart", 
-        "nikke fanart", "stellar blade"
+        "genshin fanart", "hsr fanart", "zzz fanart", "wuwa fanart", "nikke fanart"
     ]
     results = []
     
     for q in queries:
         try:
-            res = scraper.get(
+            res = requests.get(
                 "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts",
                 params={"q": q, "limit": 30},
                 timeout=10
@@ -104,29 +112,33 @@ def fetch_bluesky_viral():
                         results.append(f"[Bluesky | ❤️{likes}]: {text[:150]}")
         except Exception:
             pass
-        time.sleep(0.2)
+        time.sleep(0.5)
         
     return sorted(results, key=lambda x: int(re.search(r'❤️(\d+)', x).group(1)) if re.search(r'❤️(\d+)', x) else 0, reverse=True)[:40]
 
 def fetch_bilibili_targeted():
-    """Сбор Bilibili (мобильные и синглплеерные игры)"""
-    categories = [119, 17]
+    """Сбор Bilibili через поиск по конкретным игровым видео (PV/Анонсы)"""
+    queries = ["角色演示", "PV", "实机演示"] # Демо персонажа, PV, Геймплей
     results = []
     
-    for rid in categories:
-        url = f"https://api.bilibili.com/x/web-interface/ranking/v2?rid={rid}&type=all"
+    for q in queries:
+        encoded_q = urllib.parse.quote(q)
+        # tids=4 ограничивает поиск игровой категорией
+        url = f"https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword={encoded_q}&tids=4&order=pubdate"
         try:
             res = scraper.get(url, timeout=10)
             if res.status_code == 200:
-                items = res.json().get('data', {}).get('list', [])[:15]
+                items = res.json().get('data', {}).get('result', [])[:15]
                 for item in items:
-                    title = item.get('title', '')
-                    views = item.get('stat', {}).get('view', 0)
+                    title = item.get('title', '').replace('<em class="keyword">', '').replace('</em>', '')
+                    views = item.get('play', 0)
                     views_k = f"{views // 1000}k" if views > 1000 else str(views)
-                    results.append(f"[Bilibili Hot (CN) | 👁️{views_k}]: {title}")
+                    
+                    if views > 5000:
+                        results.append(f"[Bilibili (CN) | 👁️{views_k}]: {title}")
         except Exception:
             pass
-        time.sleep(0.3)
+        time.sleep(1)
         
     return results[:30]
 
@@ -154,7 +166,7 @@ def fetch_gaming_media_filtered():
     return results[:30]
 
 def fetch_youtube_stable(api_key):
-    """Сбор YouTube"""
+    """Сбор YouTube (Официальные трейлеры)"""
     if not api_key: return []
     time_limit = (datetime.utcnow() - timedelta(days=3)).isoformat() + "Z"
     queries = ["Genshin character demo", "Honkai Star Rail trailer", "Zenless Zone Zero teaser", "Nikke animation"]
@@ -193,7 +205,7 @@ def run_all_sources():
 # ДИНАМИЧЕСКИЙ ПОДБОР МОДЕЛЕЙ (PRO -> FLASH)
 # ==========================================
 def get_prioritized_models(api_key):
-    """Запрашивает доступные модели через API и сортирует: сначала Pro, затем Flash"""
+    """Автоподбор свежих моделей Gemini"""
     fallback_models = [
         "gemini-2.5-pro", "gemini-2.0-pro-exp-02-05", "gemini-1.5-pro-latest", "gemini-1.5-pro",
         "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"
@@ -223,7 +235,6 @@ def get_prioritized_models(api_key):
                 match = re.search(r'gemini-(\d+(?:\.\d+)?)', m_name)
                 return float(match.group(1)) if match else 0.0
 
-            # Сортируем Pro по убыванию версии, затем Flash по убыванию
             pro_models.sort(key=extract_ver, reverse=True)
             flash_models.sort(key=extract_ver, reverse=True)
             
@@ -242,13 +253,14 @@ def analyze_hype_feed(feed_dump, key, nsfw_enabled):
     prompt = f"""
     ТЫ — ГЛАВНЫЙ АРТ-ПРОДЮСЕР, АНАЛИТИК ТРЕНДОВ И ЭКСПЕРТ ПО АЛГОРИТМАМ СОЦСЕТЕЙ.
     Сегодня {current_date}.
+    Твоя цель — отобрать инфоповоды для вирального 3D-фанарта женских персонажей, который соберет МАКСИМУМ охватов на 15+ платформах (включая китайские LOFTER, Rednote, а также Twitter, Pixiv, Reddit и др.).
 
     ВХОДНЫЕ СИГНАЛЫ (с метриками лайков 👍, комментов 💬 и просмотров 👁️):
     {json.dumps(feed_dump, ensure_ascii=False)}
 
     🔥 ЖЕСТКИЕ ПРАВИЛА (ANTI-HALLUCINATION & GROUNDING):
     1. ИСПОЛЬЗУЙ ТОЛЬКО ДАННЫЕ ИЗ ВХОДНЫХ СИГНАЛОВ. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать персонажей или добавлять кого-то, кого нет в JSON выше.
-    2. ВЕС СИГНАЛА ИМЕЕТ ЗНАЧЕНИЕ: Приоритет отдавай тем персонажам, у которых в источнике стоят максимальные цифры реакций.
+    2. ВЕС СИГНАЛА ИМЕЕТ ЗНАЧЕНИЕ: Приоритет отдавай тем персонажам, у которых в источнике стоят максимальные цифры реакций. Учитывай специфику азиатского рынка (Bilibili).
     3. ТОЛЬКО ЖЕНСКИЕ ПЕРСОНАЖИ.
     4. ЕСЛИ ДАННЫХ НЕДОСТАТОЧНО: Если во входных сигналах есть только 3 подходящих персонажа — верни ровно 3. НЕ ДОБИВАЙ список выдуманными именами.
     {spicy_instruction}
@@ -309,9 +321,9 @@ if st.button("🚀 Запустить Hype-Scan (Жесткий сбор дан�
     else:
         status_container = st.status("📡 Сбор данных по всем каналам...", expanded=True)
         try:
-            status_container.write("1. 🟢 Пробиваем Reddit (глубокий скан топ-постов)...")
-            status_container.write("2. 🟢 Парсим Bluesky (фильтрация по лайкам)...")
-            status_container.write("3. 🟢 Соединение с Bilibili (Gacha & Single-player)...")
+            status_container.write("1. 🟢 Пробиваем Reddit (requests API + User-Agent)...")
+            status_container.write("2. 🟢 Парсим Bluesky (открытый API)...")
+            status_container.write("3. 🟢 Соединение с Bilibili (поиск по PV/Демо)...")
             status_container.write("4. 🟢 Сбор RSS Gaming Media...")
             
             raw_feed = run_all_sources()
