@@ -12,7 +12,7 @@ import random
 import urllib.parse
 
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
-st.set_page_config(page_title="🔥 Waifu Art Hype Radar", page_icon="📈", layout="wide")
+st.set_page_config(page_title="🔥 Waifu Art Hype Radar (Dynamic Discovery)", page_icon="📈", layout="wide")
 
 st.markdown("""
 <style>
@@ -31,8 +31,8 @@ scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 
 gemini_key = st.secrets.get("GEMINI_API_KEY", "")
 youtube_key = st.secrets.get("YOUTUBE_API_KEY", "")
 
-st.title("📈 Omni-Channel Art Hype Radar")
-st.markdown("Глубокий мониторинг виральности персонажей видеоигр для максимизации охватов на всех площадках.")
+st.title("📈 Omni-Channel Art Hype Radar (Динамический поиск)")
+st.markdown("Поиск персонажей на основе глобальных трендов индустрии без ограничений по конкретным франшизам.")
 
 with st.sidebar:
     st.header("⚙️ Параметры Сбора")
@@ -43,176 +43,158 @@ with st.sidebar:
     st.write(f"📺 YouTube API: {'🟢 Активен' if youtube_key else '⚪ Выключен'}")
 
 # ==========================================
-# ПАРСЕРЫ С МНОГОУРОВНЕВЫМ СБОРОМ
+# ДИНАМИЧЕСКИЕ ПАРСЕРЫ (БЕЗ ЖЕСТКИХ ТЕГОВ ИГР)
 # ==========================================
 
-def fetch_reddit_deep():
-    """Расширенный сбор Reddit: 18 сабреддитов с объединением Hot и Top 24h"""
-    subs = [
-        "Genshin_Impact_Leaks", "HonkaiStarRail_Leaks", "Zenlesszonezero_leaks_",
-        "WutheringWavesLeaks", "NikkeMobile", "BlueArchive", "StellarBlade",
-        "Genshin_Impact", "HonkaiStarRail", "ZZZ_Official", "WutheringWaves",
-        "gachagaming", "AzurLane", "grandorder",
-        "cyberpunkgame", "ResidentEvil", "FinalFantasy", "Tekken"
-    ]
+def fetch_reddit_dynamic():
+    """Сбор Reddit через межпроектные хабы и динамические сквозные тренды"""
     results = []
-    exclude_keywords = ["megathread", "daily question", "weekly", "help", "troubleshooting", "maintenance", "gacha pull", "friend code", "banner prediction"]
-    headers = {'User-Agent': f'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 ArtTracker/{random.randint(100, 999)}'}
-    
-    for sub in subs:
-        feed_urls = [
-            (f"https://www.reddit.com/r/{sub}/top.rss?t=day", "Top 24h"),
-            (f"https://www.reddit.com/r/{sub}/.rss", "Hot")
-        ]
-        for url, tag in feed_urls:
-            try:
-                res = requests.get(url, headers=headers, timeout=6)
-                if res.status_code == 200:
-                    parsed = feedparser.parse(res.content)
-                    for entry in parsed.entries[:5]:
-                        title = entry.title.strip()
-                        if not any(ex in title.lower() for ex in exclude_keywords) and len(title) > 8:
-                            sig = f"[Reddit r/{sub} | 🔥 {tag}]: {title}"
-                            if sig not in results:
-                                results.append(sig)
-            except Exception:
-                pass
-        time.sleep(0.15)
-        
-    return results[:80]
+    headers = {'User-Agent': f'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 HubTracker/{random.randint(100, 999)}'}
+    exclude_keywords = ["megathread", "daily question", "weekly", "help", "troubleshooting", "maintenance", "giveaway", "mod post"]
 
-
-def fetch_bluesky_viral():
-    """Сбор Bluesky: прямой API + зеркальный шлюз при блокировках"""
-    results = []
-    queries = ["waifu fanart", "character teaser", "drip marketing", "genshin fanart", "hsr fanart", "zzz fanart", "wuwa fanart", "nikke fanart", "stellar blade"]
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'application/json'
-    }
-    
-    # 1. Прямой опрос официального публичного API
-    for q in queries:
+    # 1. Общеигровые и арт-хабы
+    general_hubs = ["gaming", "Games", "gachagaming", "pcgaming", "AnimeART", "CharacterDrawing", "DigitalArt", "cosplay"]
+    for hub in general_hubs:
+        url = f"https://www.reddit.com/r/{hub}/top.rss?t=day"
         try:
-            res = requests.get(
-                "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts",
-                params={"q": q, "limit": 20},
-                headers=headers,
-                timeout=5
-            )
+            res = requests.get(url, headers=headers, timeout=5)
             if res.status_code == 200:
-                posts = res.json().get('posts', [])
-                for p in posts:
-                    record = p.get('record', {})
-                    text = record.get('text', '').replace('\n', ' ').strip()
-                    likes = p.get('likeCount', 0)
-                    if len(text) > 12:
-                        like_badge = f" | ❤️{likes}" if likes > 0 else ""
-                        results.append(f"[Bluesky{like_badge}]: {text[:130]}")
+                feed = feedparser.parse(res.content)
+                for entry in feed.entries[:5]:
+                    title = entry.title.strip()
+                    if not any(ex in title.lower() for ex in exclude_keywords) and len(title) > 8:
+                        results.append(f"[Reddit r/{hub} | 🔥 Top 24h]: {title}")
         except Exception:
             pass
         time.sleep(0.1)
 
-    # 2. Зеркальный RSS-шлюз (если прямой API возвращает 0 из-за IP-лимитов)
+    # 2. Сквозной поиск по всему Reddit на предмет горячих инфоповодов последних 48 часов
+    discovery_queries = [
+        'site:reddit.com/r/*+("character reveal"+OR+"drip marketing"+OR+"new character"+OR+"character trailer"+OR+"champion teaser")+when:2d',
+        'site:reddit.com/r/*+("fanart"+OR+"cosplay")+("reveal"+OR+"teaser"+OR+"skin"+OR+"new")+when:2d'
+    ]
+    for dq in discovery_queries:
+        try:
+            url = f"https://news.google.com/rss/search?q={dq}&hl=en-US&gl=US&ceid=US:en"
+            res = requests.get(url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                feed = feedparser.parse(res.content)
+                for entry in feed.entries[:8]:
+                    title = entry.title.split(" - ")[0].strip()
+                    if not any(ex in title.lower() for ex in exclude_keywords) and len(title) > 10:
+                        results.append(f"[Reddit Global Hype]: {title}")
+        except Exception:
+            pass
+        time.sleep(0.1)
+
+    return list(dict.fromkeys(results))[:50]
+
+
+def fetch_bluesky_dynamic():
+    """Сбор Bluesky по общевирусным арт- и игровым маркерам"""
+    results = []
+    queries = [
+        "character reveal", "drip marketing", "character teaser",
+        "new character", "game fanart", "waifu fanart", "concept art", "playable character"
+    ]
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json'
+    }
+    
+    # Прямой опрос API
+    for q in queries:
+        try:
+            res = requests.get(
+                "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts",
+                params={"q": q, "limit": 15},
+                headers=headers,
+                timeout=5
+            )
+            if res.status_code == 200:
+                for p in res.json().get('posts', []):
+                    record = p.get('record', {})
+                    text = record.get('text', '').replace('\n', ' ').strip()
+                    likes = p.get('likeCount', 0)
+                    if likes >= 10 and len(text) > 12:
+                        results.append(f"[Bluesky | ❤️{likes}]: {text[:130]}")
+        except Exception:
+            pass
+        time.sleep(0.1)
+
+    # Зеркальный шлюз при лимитах
     if len(results) < 8:
         gw_queries = [
-            "site:bsky.app+fanart+when:3d",
-            "site:bsky.app+genshin+when:3d",
-            "site:bsky.app+honkai+when:3d",
-            "site:bsky.app+nikke+when:3d"
+            "site:bsky.app+(" + "+OR+".join(["fanart", "character+reveal", "drip+marketing", "concept+art"]) + ")+when:3d"
         ]
         for gq in gw_queries:
             try:
                 gw_url = f"https://news.google.com/rss/search?q={gq}&hl=en-US&gl=US&ceid=US:en"
                 res = requests.get(gw_url, headers=headers, timeout=5)
                 if res.status_code == 200:
-                    feed = feedparser.parse(res.content)
-                    for entry in feed.entries[:6]:
+                    for entry in feedparser.parse(res.content).entries[:10]:
                         title = entry.title.split(" - ")[0].strip()
                         if len(title) > 10:
                             results.append(f"[Bluesky Signal]: {title}")
             except Exception:
                 pass
-            time.sleep(0.1)
 
     return list(dict.fromkeys(results))[:40]
 
 
-def fetch_bilibili_targeted():
-    """Сбор Bilibili: Ranking API + поисковый шлюз китайского сегмента"""
+def fetch_bilibili_dynamic():
+    """Сбор трендов Bilibili по всему игровому сектору (rid=4) без привязки к тайтлам"""
     results = []
-    categories = [119, 17]
-    cn_keywords = ["PV", "演示", "实机", "预告", "角色", "动画", "前瞻", "原神", "崩坏", "绝区零", "鸣潮"]
-    
-    # 1. Пробуем ranking API
-    for rid in categories:
+    # Категории: 4 (Все игры), 119 (Мобильные), 17 (Синглплеер)
+    for rid in [4, 119, 17]:
         url = f"https://api.bilibili.com/x/web-interface/ranking/v2?rid={rid}&type=all"
         try:
             res = scraper.get(url, timeout=6)
             if res.status_code == 200:
-                items = res.json().get('data', {}).get('list', [])
-                for item in items:
+                for item in res.json().get('data', {}).get('list', [])[:12]:
                     title = item.get('title', '')
                     views = item.get('stat', {}).get('view', 0)
-                    if any(kw in title for kw in cn_keywords):
-                        views_k = f"{views // 1000}k" if views > 1000 else str(views)
-                        results.append(f"[Bilibili Hot (CN) | 👁️{views_k}]: {title}")
+                    views_k = f"{views // 1000}k" if views > 1000 else str(views)
+                    results.append(f"[Bilibili Hot (CN) | 👁️{views_k}]: {title}")
         except Exception:
             pass
-        time.sleep(0.2)
+        time.sleep(0.15)
         
-    # 2. Зеркальный шлюз по китайским игровым анонсам
-    if len(results) < 5:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        gw_queries = ["site:bilibili.com/video+(角色演示+OR+原神+OR+绝区零+OR+星穹铁道+OR+鸣潮)+when:3d"]
-        for gq in gw_queries:
-            try:
-                gw_url = f"https://news.google.com/rss/search?q={gq}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-                res = requests.get(gw_url, headers=headers, timeout=6)
-                if res.status_code == 200:
-                    feed = feedparser.parse(res.content)
-                    for entry in feed.entries[:8]:
-                        title = entry.title.split(" - ")[0].strip()
-                        if len(title) > 6:
-                            results.append(f"[Bilibili Hot (CN)]: {title}")
-            except Exception:
-                pass
-
     return list(dict.fromkeys(results))[:30]
 
 
-def fetch_gaming_media_filtered():
-    """RSS сбор профильных изданий с фильтрацией инфоповодов"""
+def fetch_gaming_media_dynamic():
+    """Сбор всех игровых новостей без фильтра по названиям игр"""
     feeds = [
         "https://www.gematsu.com/feed",
         "https://www.siliconera.com/feed",
         "https://animecorner.me/feed/",
-        "https://noisypixel.net/feed/"
+        "https://noisypixel.net/feed/",
+        "https://automaton-media.com/en/feed/"
     ]
     results = []
-    hype_keywords = ["character", "trailer", "announce", "leak", "reveal", "gameplay", "update", "visual"]
+    hype_markers = ["character", "trailer", "announce", "leak", "reveal", "gameplay", "update", "visual", "teaser", "champion", "fighter"]
     
     for u in feeds:
         try:
-            res = scraper.get(u, timeout=6)
+            res = scraper.get(u, timeout=5)
             if res.status_code == 200:
-                parsed = feedparser.parse(res.content)
-                for entry in parsed.entries[:12]:
+                for entry in feedparser.parse(res.content).entries[:10]:
                     title = entry.title
-                    if any(kw in title.lower() for kw in hype_keywords):
+                    if any(m in title.lower() for m in hype_markers):
                         results.append(f"[Gaming Media]: {title}")
         except Exception:
             continue
-    return results[:35]
+    return list(dict.fromkeys(results))[:40]
 
 
-def fetch_youtube_stable(api_key):
-    """Сбор YouTube трейлеров и демонстраций персонажей"""
+def fetch_youtube_dynamic(api_key):
+    """Сбор YouTube по отраслевым маркерам трейлеров и анонсов"""
     if not api_key: return []
     time_limit = (datetime.utcnow() - timedelta(days=3)).isoformat() + "Z"
     queries = [
-        "Genshin character demo", "Honkai Star Rail trailer",
-        "Zenless Zone Zero teaser", "Wuthering Waves resonator", "Nikke animation"
+        "official character trailer", "character reveal trailer",
+        "character demo", "new playable character showcase", "new champion teaser"
     ]
     results = []
     for q in queries:
@@ -228,18 +210,18 @@ def fetch_youtube_stable(api_key):
                     results.append(f"[YouTube Trending]: {item['snippet']['title']}")
         except Exception:
             pass
-    return results[:20]
+    return results[:25]
 
 
 def run_all_sources():
     feed = []
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [
-            executor.submit(fetch_reddit_deep),
-            executor.submit(fetch_bluesky_viral),
-            executor.submit(fetch_bilibili_targeted),
-            executor.submit(fetch_gaming_media_filtered),
-            executor.submit(fetch_youtube_stable, youtube_key)
+            executor.submit(fetch_reddit_dynamic),
+            executor.submit(fetch_bluesky_dynamic),
+            executor.submit(fetch_bilibili_dynamic),
+            executor.submit(fetch_gaming_media_dynamic),
+            executor.submit(fetch_youtube_dynamic, youtube_key)
         ]
         for f in as_completed(futures):
             feed.extend(f.result())
@@ -293,24 +275,28 @@ def analyze_hype_feed(feed_dump, key, nsfw_enabled):
     prompt = f"""
     ТЫ — ГЛАВНЫЙ АРТ-ПРОДЮСЕР, АНАЛИТИК ТРЕНДОВ И ЭКСПЕРТ ПО АЛГОРИТМАМ СОЦСЕТЕЙ.
     Сегодня {current_date}.
-    Твоя цель — отобрать инфоповоды для вирального фанарта женских персонажей, который соберет МАКСИМУМ охватов на 15+ платформах (включая LOFTER, Rednote, Pixiv, Twitter/X, Reddit).
+    Твоя задача — выявить САМЫХ ВИРАЛЬНЫХ ЖЕНСКИХ ПЕРСОНАЖЕЙ из любых игр (Gacha, AAA, MOBA, Fighting, Indie и др.) на основе предоставленных сырых данных.
+    Фанарт будет публиковаться на 15+ платформах (включая LOFTER, Rednote, Pixiv, Twitter/X, Reddit).
 
-    ВХОДНЫЕ СИГНАЛЫ:
+    ВХОДНЫЕ СИГНАЛЫ (Reddit, Bluesky, Bilibili, YouTube, СМИ):
     {json.dumps(feed_dump, ensure_ascii=False)}
 
     🔥 ЖЕСТКИЕ ПРАВИЛА (ANTI-HALLUCINATION & GROUNDING):
-    1. ИСПОЛЬЗУЙ ТОЛЬКО ДАННЫЕ ИЗ ВХОДНЫХ СИГНАЛОВ. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать персонажей или добавлять кого-то, кого нет во входных данных.
+    1. СТРОГАЯ ПРИВЯЗКА К СИГНАЛАМ: Анализируй ВСЕ игры, упомянутые во входных данных. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать персонажей, если в сигналах нет инфоповода по ним.
     2. ТОЛЬКО ЖЕНСКИЕ ПЕРСОНАЖИ.
-    3. ЕСЛИ ДАННЫХ НЕДОСТАТОЧНО: Верни ровно столько персонажей, сколько подтверждено сигналами. НЕ ДОБИВАЙ список выдуманными именами.
+    3. РАЗДЕЛЕНИЕ ПО КАТЕГОРИЯМ:
+       - "gacha_top": персонажи мобильных и сервисных гача-игр.
+       - "other_games_top": персонажи любых других игр (League of Legends, Resident Evil, Fighting, RPG, PC/Консоли).
+    4. ЕСЛИ ДАННЫХ НЕДОСТАТОЧНО: Верни ровно столько персонажей, сколько подтверждено сигналами. Не добавляй вымышленных для заполнения списка.
     {spicy_instruction}
 
     ВЕРНИ ОТВЕТ СТРОГО В JSON:
     {{
       "absolute_leader": {{
         "name": "Имя героини",
-        "game": "Игра",
+        "game": "Игра (любой проект)",
         "virality_score": 99,
-        "past_72h_event": "В чем заключается хайп (анонс/слив/патч)",
+        "past_72h_event": "В чем заключается хайп (анонс/слив/патч/трейлер)",
         "source_signal": "Точный источник из входных данных",
         "why_draw_today": "Почему публикация арта именно сегодня даст взрывной рост аудитории",
         "tags": ["trending", "waifu", "имяперсонажа"]
@@ -319,7 +305,7 @@ def analyze_hype_feed(feed_dump, key, nsfw_enabled):
         {{ "rank": 1, "name": "Персонаж", "game": "Игра", "analysis": "Причина фансервис-хайпа", "source_signal": "Источник", "score": 96, "tags": ["spicy"] }}
       ],
       "gacha_top": [
-        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "score": 98, "source_signal": "Источник хайпа", "reason": "Причина (Слив/Трейлер)" }}
+        {{ "rank": 1, "name": "Персонаж", "game": "Игра", "score": 98, "source_signal": "Источник хайпа", "reason": "Причина" }}
       ],
       "other_games_top": [
         {{ "rank": 1, "name": "Персонаж", "game": "Игра", "score": 97, "source_signal": "Источник хайпа", "reason": "Причина" }}
@@ -354,16 +340,16 @@ def analyze_hype_feed(feed_dump, key, nsfw_enabled):
 # ==========================================
 # ИНТЕРФЕЙС STREAMLIT
 # ==========================================
-if st.button("🚀 Запустить Hype-Scan", type="primary", use_container_width=True):
+if st.button("🚀 Запустить Hype-Scan (Динамический сбор)", type="primary", use_container_width=True):
     if not gemini_key:
         st.error("⚠️ Добавьте GEMINI_API_KEY в конфигурацию.")
     else:
-        status_container = st.status("📡 Сбор данных по всем каналам...", expanded=True)
+        status_container = st.status("📡 Динамический сбор по всем каналам индустрии...", expanded=True)
         try:
-            status_container.write("1. 🟢 Сбор Reddit (18 сабреддитов, Hot + Top 24h)...")
-            status_container.write("2. 🟢 Сбор Bluesky (API + Зеркальный шлюз)...")
-            status_container.write("3. 🟢 Соединение с Bilibili...")
-            status_container.write("4. 🟢 Сбор RSS Gaming Media и YouTube...")
+            status_container.write("1. 🟢 Сквозной сбор Reddit (Агрегаторы + Глобальный поиск)...")
+            status_container.write("2. 🟢 Сбор Bluesky по открытым маркерам...")
+            status_container.write("3. 🟢 Сбор трендов Bilibili Gaming...")
+            status_container.write("4. 🟢 Сбор СМИ и YouTube анонсов...")
             
             raw_feed = run_all_sources()
             
@@ -371,8 +357,8 @@ if st.button("🚀 Запустить Hype-Scan", type="primary", use_container_
                 status_container.update(label="❌ Собрано слишком мало данных. Попробуйте еще раз через минуту.", state="error")
                 st.stop()
                 
-            status_container.write(f"✅ Успешно собрано {len(raw_feed)} сигналов.")
-            status_container.write("🧠 Определение лучшей доступной модели Pro/Flash и запуск анализа...")
+            status_container.write(f"✅ Успешно собрано {len(raw_feed)} уникальных сигналов индустрии.")
+            status_container.write("🧠 Определение актуальной модели Gemini и запуск анализа...")
             
             ai_results, used_model = analyze_hype_feed(raw_feed, gemini_key, is_16_plus)
             
@@ -447,7 +433,7 @@ if st.session_state.get('scan_done', False):
 
     with col_other:
         other_list = res.get('other_games_top', [])
-        st.subheader(f"⚔️ Топ AAA/PC ({len(other_list)} подтвержденных)")
+        st.subheader(f"⚔️ Топ Другие Игры / AAA / MOBA ({len(other_list)} подтвержденных)")
         for idx, item in enumerate(other_list):
             m_icon = medals[idx] if idx < len(medals) else f"{idx+1}."
             st.markdown(f"""
